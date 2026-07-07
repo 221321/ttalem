@@ -1,4 +1,4 @@
-// ТТ Алем — учёт кухни бортпитания (v2)
+// ТТ Алем — учёт кухни бортпитания (v3)
 // Node.js без внешних зависимостей. Запуск: node server.js [порт]
 const http = require('http');
 const fs = require('fs');
@@ -11,19 +11,24 @@ const PUB = path.join(__dirname, 'public');
 
 let db = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
 
-// ---------- миграция со старой версии ----------
+// ---------- миграция ----------
 (function migrate() {
   let changed = false;
   if (!db.settings) {
     db.settings = { skladMain: 'Основной склад', skladKitchen: 'Кухня', skladDone: 'Склад готовой продукции' };
     changed = true;
   }
-  db.products.forEach(p => { if (!Array.isArray(p.recipe)) { p.recipe = []; changed = true; } });
+  db.products.forEach(p => {
+    if (!Array.isArray(p.recipe)) { p.recipe = []; changed = true; }
+    if (p.recipe.length && !p.recipeStatus) { p.recipeStatus = 'draft'; changed = true; }
+    if (!Array.isArray(p.recipeLog)) { p.recipeLog = []; changed = true; }
+  });
   if (Array.isArray(db.techcards) && db.techcards.length) {
     db.techcards.forEach(tc => {
       const dish = db.products.find(p => p.id === tc.dishId);
       if (dish && !dish.recipe.length) {
         dish.recipe = tc.items.map(it => ({ productId: it.productId, qty: it.qty, noteRaw: it.noteRaw || '', noteDone: it.noteDone || '' }));
+        dish.recipeStatus = 'draft';
       }
     });
     delete db.techcards;
@@ -46,7 +51,7 @@ function r2(x) { return Math.round(x * 100) / 100; }
 
 const sessions = {};
 
-// ---------- себестоимость (рекурсивно по дереву рецептов) ----------
+// ---------- себестоимость ----------
 function stockOf(pid) {
   if (!db.stock[pid]) db.stock[pid] = { qty: 0, value: 0 };
   return db.stock[pid];
@@ -54,7 +59,7 @@ function stockOf(pid) {
 function product(pid) { return db.products.find(p => p.id === pid); }
 function unitCost(pid, seen) {
   seen = seen || {};
-  if (seen[pid]) return 0; // защита от циклов
+  if (seen[pid]) return 0;
   seen[pid] = true;
   const s = db.stock[pid];
   if (s && s.qty > 0.0001) return s.value / s.qty;
@@ -66,7 +71,6 @@ function unitCost(pid, seen) {
   if (p.sourceId) return unitCost(p.sourceId, seen);
   return 0;
 }
-// себестоимость 1 единицы продукта по его рецепту
 function recipeCost(p, seen) {
   let total = 0;
   const items = (p.recipe || []).map(it => {
@@ -77,6 +81,29 @@ function recipeCost(p, seen) {
     return { productId: it.productId, name: c ? c.name : '?', qty: it.qty, unit: c ? c.unit : '', unitCost: r2(uc), cost: r2(cost), hasRecipe: !!(c && c.recipe && c.recipe.length) };
   });
   return { total: r2(total), items };
+}
+
+// ---------- журнал изменений рецептур ----------
+function logRecipe(p, user, text) {
+  p.recipeLog.push({ ts: new Date().toISOString(), user: user.name, text });
+  if (p.recipeLog.length > 300) p.recipeLog = p.recipeLog.slice(-300);
+}
+function diffRecipe(p, user, newName, newRecipe) {
+  const msgs = [];
+  if (newName !== undefined && newName !== p.name) msgs.push('переименовал: «' + p.name + '» → «' + newName + '»');
+  if (newRecipe !== undefined) {
+    const oldMap = {}; (p.recipe || []).forEach(it => oldMap[it.productId] = it.qty);
+    const newMap = {}; newRecipe.forEach(it => newMap[it.productId] = it.qty);
+    Object.keys(newMap).forEach(pid => {
+      const c = product(pid); const nm = c ? c.name : pid;
+      if (!(pid in oldMap)) msgs.push('добавил: ' + nm + ' ' + newMap[pid]);
+      else if (oldMap[pid] !== newMap[pid]) msgs.push('изменил: ' + nm + ' ' + oldMap[pid] + ' → ' + newMap[pid]);
+    });
+    Object.keys(oldMap).forEach(pid => {
+      if (!(pid in newMap)) { const c = product(pid); msgs.push('удалил: ' + (c ? c.name : pid)); }
+    });
+  }
+  msgs.forEach(m => logRecipe(p, user, m));
 }
 
 // ---------- операции ----------
@@ -105,10 +132,10 @@ function opProcessing(o) {
   const lossPct = r2((1 - o.qtyAfter / o.qtyBefore) * 100);
   return { type: 'processing', rawId: o.rawId, semiId: o.semiId, qtyBefore: o.qtyBefore, qtyAfter: o.qtyAfter, lossPct, sum: moved };
 }
-// выпуск по рецепту — для блюда ИЛИ полуфабриката с рецептом (испекли булочки)
 function opProduction(o) {
   const p = product(o.productId);
-  if (!p || !p.recipe || !p.recipe.length) throw new Error('У продукта нет рецепта');
+  if (!p || !p.recipe || !p.recipe.length) throw new Error('У продукта нет рецептуры');
+  if (p.recipeStatus !== 'approved') throw new Error('Рецептура «' + p.name + '» не утверждена — выпуск невозможен');
   if (!(o.count > 0)) throw new Error('Количество должно быть больше нуля');
   let total = 0;
   const writeoffs = p.recipe.map(it => {
@@ -146,26 +173,10 @@ const OPS = { receipt: opReceipt, processing: opProcessing, production: opProduc
 function reportCosting() {
   return db.products.filter(p => p.recipe && p.recipe.length).map(p => {
     const c = recipeCost(p, {});
-    return { productId: p.id, name: p.name, type: p.type, unit: p.unit, total: c.total, items: c.items };
+    return { productId: p.id, name: p.name, type: p.type, unit: p.unit, status: p.recipeStatus || 'draft', total: c.total, items: c.items };
   });
 }
-function reportLosses(from, to) {
-  const ops = db.operations.filter(o => o.type === 'processing' && (!from || o.ts >= from) && (!to || o.ts <= to + 'z'));
-  const map = {};
-  ops.forEach(o => {
-    const k = o.rawId + '|' + o.userId;
-    if (!map[k]) map[k] = { rawId: o.rawId, userId: o.userId, n: 0, before: 0, after: 0 };
-    map[k].n++; map[k].before = r2(map[k].before + o.qtyBefore); map[k].after = r2(map[k].after + o.qtyAfter);
-  });
-  return Object.values(map).map(m => {
-    const u = db.users.find(u => u.id === m.userId);
-    return { product: product(m.rawId) ? product(m.rawId).name : '?', user: u ? u.name : '?', operations: m.n,
-      totalBefore: m.before, totalAfter: m.after,
-      avgLossPct: m.before > 0 ? r2((1 - m.after / m.before) * 100) : 0 };
-  });
-}
-// выработка за период: обработка + выпуск, по продуктам и поварам
-function reportOutput(from, to) {
+function reportOutput(from, to, hideMoney) {
   const inRange = o => (!from || o.ts.slice(0, 10) >= from) && (!to || o.ts.slice(0, 10) <= to);
   const proc = {};
   db.operations.filter(o => o.type === 'processing' && inRange(o)).forEach(o => {
@@ -197,23 +208,25 @@ function reportOutput(from, to) {
       avgLossPct: m.before > 0 ? r2((1 - m.after / m.before) * 100) : 0,
       byUser: m.byUser
     })),
-    production: Object.values(prod).map(m => ({
-      name: product(m.productId) ? product(m.productId).name : '?',
-      unit: product(m.productId) ? product(m.productId).unit : '',
-      count: m.count, sum: m.sum, byUser: m.byUser
-    }))
+    production: Object.values(prod).map(m => {
+      const row = {
+        name: product(m.productId) ? product(m.productId).name : '?',
+        unit: product(m.productId) ? product(m.productId).unit : '',
+        count: m.count, byUser: m.byUser
+      };
+      if (!hideMoney) row.sum = m.sum;
+      return row;
+    })
   };
 }
 
-// ---------- экспорт в 1С (со складами и хронологией) ----------
+// ---------- экспорт в 1С ----------
 function export1c(date) {
   const S = db.settings;
   const dayOps = db.operations.filter(op => op.ts.slice(0, 10) === date);
   const docs = [];
   let minute = 0;
   const t = () => { minute += 5; const h = 8 + Math.floor(minute / 60), m = minute % 60; return ('0' + h).slice(-2) + ':' + ('0' + m).slice(-2) + ':00'; };
-
-  // 1. Перемещение: всё сырьё, потреблённое за день, Основной склад -> Кухня
   const moved = {};
   dayOps.filter(o => o.type === 'processing').forEach(o => {
     if (!moved[o.rawId]) moved[o.rawId] = { qty: 0, sum: 0 };
@@ -242,8 +255,6 @@ function export1c(date) {
       Товары: movedRows
     });
   }
-
-  // 2. Комплектации по выработке (внутри Кухни)
   const procMap = {};
   dayOps.filter(o => o.type === 'processing').forEach(o => {
     const k = o.rawId + '|' + o.semiId;
@@ -261,8 +272,6 @@ function export1c(date) {
       Комплектующие: [{ Наименование: raw.name, Код: raw.code1c || '', Количество: g.qtyBefore, Сумма: g.sum }]
     });
   });
-
-  // 3. Комплектации по выпуску: списание с Кухни, готовое на Склад ГП
   const prodMap = {};
   dayOps.filter(o => o.type === 'production').forEach(o => {
     if (!prodMap[o.productId]) prodMap[o.productId] = { count: 0, sum: 0, wo: {} };
@@ -301,6 +310,13 @@ function auth(req) {
 }
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.png': 'image/png', '.svg': 'image/svg+xml' };
 
+function productOut(p, role) {
+  if (role === 'admin') return p;
+  const c = Object.assign({}, p);
+  delete c.priceKg; delete c.lastCost;
+  return c;
+}
+
 const server = http.createServer((req, res) => {
   const u = new URL(req.url, 'http://x');
   let body = '';
@@ -336,47 +352,109 @@ function route(req, res, u, data) {
   }
   const user = auth(req);
   if (!user) return json(res, 401, { error: 'Нужен вход' });
-  const canEdit = user.role !== 'cook';
+  const role = user.role;
+  const isAdmin = role === 'admin';
 
   if (p === '/api/bootstrap' && req.method === 'GET') {
     const stock = {};
     Object.entries(db.stock).forEach(([pid, s]) => {
-      stock[pid] = { qty: s.qty, value: s.value, avg: s.qty > 0.0001 ? r2(s.value / s.qty) : r2(unitCost(pid)) };
+      stock[pid] = isAdmin
+        ? { qty: s.qty, value: s.value, avg: s.qty > 0.0001 ? r2(s.value / s.qty) : r2(unitCost(pid)) }
+        : { qty: s.qty };
     });
-    return json(res, 200, { products: db.products, stock, settings: db.settings, me: { id: user.id, name: user.name, role: user.role } });
+    return json(res, 200, {
+      products: db.products.map(x => productOut(x, role)),
+      stock, settings: isAdmin ? db.settings : undefined,
+      me: { id: user.id, name: user.name, role }
+    });
   }
   if (p === '/api/settings' && req.method === 'PUT') {
-    if (user.role !== 'admin') return json(res, 403, { error: 'Только директор' });
+    if (!isAdmin) return json(res, 403, { error: 'Только директор' });
     ['skladMain', 'skladKitchen', 'skladDone'].forEach(k => { if (data[k]) db.settings[k] = data[k]; });
     save();
     return json(res, 200, db.settings);
   }
+
+  // ---------- продукты ----------
   if (p === '/api/products' && req.method === 'POST') {
-    if (!canEdit) return json(res, 403, { error: 'Нет прав' });
+    if (role === 'cook' && !(data.type === 'dish' || data.type === 'semi')) {
+      return json(res, 403, { error: 'Повар создаёт только рецептуры (блюда и полуфабрикаты)' });
+    }
     const np = { id: nid('p'), name: (data.name || '').trim(), type: data.type || 'raw', unit: data.unit || 'кг',
-      priceKg: 0, sourceId: data.sourceId || null, code1c: data.code1c || '', recipe: data.recipe || [], lastCost: 0 };
+      priceKg: 0, sourceId: role === 'cook' ? null : (data.sourceId || null), code1c: role === 'cook' ? '' : (data.code1c || ''),
+      recipe: (data.recipe || []).filter(it => it.qty > 0), recipeLog: [], lastCost: 0 };
     if (!np.name) return json(res, 400, { error: 'Введите наименование' });
     if (np.recipe.length && np.type === 'raw') np.type = 'semi';
+    if (np.recipe.length) { np.recipeStatus = 'draft'; logRecipe(np, { name: user.name }, 'создал рецептуру'); }
     db.products.push(np); save();
-    return json(res, 200, np);
+    return json(res, 200, productOut(np, role));
   }
   const mProd = p.match(/^\/api\/products\/([^/]+)$/);
   if (mProd && req.method === 'PUT') {
-    if (!canEdit) return json(res, 403, { error: 'Нет прав' });
     const pr = product(mProd[1]);
     if (!pr) return json(res, 404, { error: 'Не найден' });
-    ['name', 'type', 'unit', 'sourceId', 'code1c'].forEach(k => { if (data[k] !== undefined) pr[k] = data[k]; });
-    if (data.recipe !== undefined) {
-      pr.recipe = (data.recipe || []).filter(it => it.productId !== pr.id);
-      // автопереезд между вкладками: появился рецепт у продукта -> полуфабрикат, пропал -> продукт
-      if (pr.recipe.length && pr.type === 'raw') pr.type = 'semi';
-      if (!pr.recipe.length && pr.type === 'semi' && !pr.sourceId) pr.type = 'raw';
+    const touchesRecipe = data.recipe !== undefined || (data.name !== undefined && pr.recipe.length);
+    if (touchesRecipe && pr.recipe.length) {
+      const st = pr.recipeStatus || 'draft';
+      if (st === 'approved' && !isAdmin) return json(res, 403, { error: 'Рецептура утверждена. Изменения — только через директора' });
+      if (st === 'submitted' && role === 'cook') return json(res, 403, { error: 'Рецептура передана менеджеру. Повар изменить не может' });
     }
+    const cleanRecipe = data.recipe !== undefined ? data.recipe.filter(it => it.qty > 0 && it.productId !== pr.id) : undefined;
+    if (role === 'cook') {
+      if (!pr.recipe.length && !(cleanRecipe && cleanRecipe.length)) return json(res, 403, { error: 'Нет прав' });
+      diffRecipe(pr, user, data.name, cleanRecipe);
+      if (data.name !== undefined) pr.name = String(data.name).trim();
+      if (data.unit !== undefined) pr.unit = data.unit;
+      if (cleanRecipe !== undefined) pr.recipe = cleanRecipe;
+    } else {
+      if (touchesRecipe) diffRecipe(pr, user, data.name, cleanRecipe);
+      ['name', 'type', 'unit', 'sourceId', 'code1c'].forEach(k => { if (data[k] !== undefined) pr[k] = data[k]; });
+      if (cleanRecipe !== undefined) {
+        pr.recipe = cleanRecipe;
+        if (pr.recipe.length && pr.type === 'raw') pr.type = 'semi';
+        if (!pr.recipe.length && pr.type === 'semi' && !pr.sourceId) pr.type = 'raw';
+      }
+    }
+    if (pr.recipe.length && !pr.recipeStatus) pr.recipeStatus = 'draft';
     save();
-    return json(res, 200, pr);
+    return json(res, 200, productOut(pr, role));
   }
+  // ---------- статусы рецептур ----------
+  const mSt = p.match(/^\/api\/recipes\/([^/]+)\/status$/);
+  if (mSt && req.method === 'POST') {
+    const pr = product(mSt[1]);
+    if (!pr || !pr.recipe.length) return json(res, 404, { error: 'Рецептура не найдена' });
+    const st = pr.recipeStatus || 'draft';
+    const a = data.action;
+    if (a === 'submit') {
+      if (st !== 'draft') return json(res, 400, { error: 'Уже передана' });
+      pr.recipeStatus = 'submitted';
+      logRecipe(pr, user, 'передал менеджеру');
+    } else if (a === 'approve') {
+      if (role === 'cook') return json(res, 403, { error: 'Утверждает менеджер или директор' });
+      if (st === 'approved') return json(res, 400, { error: 'Уже утверждена' });
+      pr.recipeStatus = 'approved';
+      logRecipe(pr, user, 'УТВЕРДИЛ рецептуру');
+    } else if (a === 'reopen') {
+      if (!isAdmin) return json(res, 403, { error: 'Снять блок может только директор' });
+      pr.recipeStatus = 'draft';
+      logRecipe(pr, user, 'вернул на доработку');
+    } else return json(res, 400, { error: 'Неизвестное действие' });
+    save();
+    return json(res, 200, { status: pr.recipeStatus });
+  }
+  const mLog = p.match(/^\/api\/recipes\/([^/]+)\/log$/);
+  if (mLog && req.method === 'GET') {
+    if (!isAdmin) return json(res, 403, { error: 'История доступна директору' });
+    const pr = product(mLog[1]);
+    if (!pr) return json(res, 404, { error: 'Не найден' });
+    return json(res, 200, pr.recipeLog || []);
+  }
+
+  // ---------- операции ----------
   if (p === '/api/ops' && req.method === 'POST') {
-    if (data.type === 'receipt' && !canEdit) return json(res, 403, { error: 'Приход вносит директор или технолог' });
+    if (data.type === 'receipt' && role === 'cook') return json(res, 403, { error: 'Нет прав' });
+    if (data.type === 'inventory' && !isAdmin) return json(res, 403, { error: 'Инвентаризацию проводит директор' });
     const fn = OPS[data.type];
     if (!fn) return json(res, 400, { error: 'Неизвестная операция' });
     const rec = fn(data);
@@ -384,7 +462,9 @@ function route(req, res, u, data) {
     rec.ts = new Date().toISOString();
     rec.userId = user.id;
     db.operations.push(rec); save();
-    return json(res, 200, rec);
+    const out = Object.assign({}, rec);
+    if (!isAdmin) { delete out.sum; delete out.price; delete out.writeoffs; }
+    return json(res, 200, out);
   }
   if (p === '/api/ops' && req.method === 'GET') {
     let ops = db.operations;
@@ -394,35 +474,26 @@ function route(req, res, u, data) {
     if (date) ops = ops.filter(o => o.ts.slice(0, 10) === date);
     if (type) ops = ops.filter(o => o.type === type);
     if (mine) ops = ops.filter(o => o.userId === user.id);
-    return json(res, 200, ops.slice(-500));
+    ops = ops.slice(-500);
+    if (!isAdmin) ops = ops.map(o => { const c = Object.assign({}, o); delete c.sum; delete c.price; delete c.writeoffs; return c; });
+    return json(res, 200, ops);
   }
-  const mDel = p.match(/^\/api\/ops\/([^/]+)$/);
-  if (mDel && req.method === 'DELETE') {
-    if (!canEdit) return json(res, 403, { error: 'Нет прав' });
-    const i = db.operations.findIndex(o => o.id === mDel[1]);
-    if (i < 0) return json(res, 404, { error: 'Не найдена' });
-    const o = db.operations[i];
-    if (o.type === 'receipt') { const s = stockOf(o.productId); s.qty = r2(s.qty - o.qty); s.value = r2(s.value - o.sum); }
-    if (o.type === 'processing') {
-      const sr = stockOf(o.rawId), ss = stockOf(o.semiId);
-      sr.qty = r2(sr.qty + o.qtyBefore); sr.value = r2(sr.value + o.sum);
-      ss.qty = r2(ss.qty - o.qtyAfter); ss.value = r2(Math.max(0, ss.value - o.sum));
-    }
-    if (o.type === 'production') {
-      o.writeoffs.forEach(w => { const s = stockOf(w.productId); s.qty = r2(s.qty + w.qty); s.value = r2(s.value + w.sum); });
-      const sd = stockOf(o.productId); sd.qty = r2(sd.qty - o.count); sd.value = r2(Math.max(0, sd.value - o.sum));
-    }
-    db.operations.splice(i, 1); save();
-    return json(res, 200, { ok: true });
+
+  // ---------- отчёты ----------
+  if (p === '/api/report/costing') {
+    if (!isAdmin) return json(res, 403, { error: 'Калькуляция доступна директору' });
+    return json(res, 200, reportCosting());
   }
-  if (p === '/api/report/costing') return json(res, 200, reportCosting());
-  if (p === '/api/report/losses') return json(res, 200, reportLosses(u.searchParams.get('from'), u.searchParams.get('to')));
-  if (p === '/api/report/output') return json(res, 200, reportOutput(u.searchParams.get('from'), u.searchParams.get('to')));
+  if (p === '/api/report/output') {
+    if (role === 'cook') return json(res, 403, { error: 'Нет прав' });
+    return json(res, 200, reportOutput(u.searchParams.get('from'), u.searchParams.get('to'), !isAdmin));
+  }
   if (p === '/api/1c/export') {
+    if (!isAdmin) return json(res, 403, { error: 'Только директор' });
     const date = u.searchParams.get('date') || new Date().toISOString().slice(0, 10);
     return json(res, 200, { Дата: date, Склады: db.settings, Документы: export1c(date) });
   }
   json(res, 404, { error: 'not found' });
 }
 
-server.listen(PORT, () => console.log('ТТ Алем v2 запущен: http://localhost:' + PORT));
+server.listen(PORT, () => console.log('ТТ Алем v3 запущен: http://localhost:' + PORT));
