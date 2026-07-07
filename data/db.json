@@ -1,0 +1,1145 @@
+{
+ "users": [
+  {
+   "id": "u1",
+   "name": "Айгуль",
+   "role": "cook",
+   "pin": "1111"
+  },
+  {
+   "id": "u2",
+   "name": "Альфия",
+   "role": "tech",
+   "pin": "2222"
+  },
+  {
+   "id": "u3",
+   "name": "Директор",
+   "role": "admin",
+   "pin": "9999"
+  }
+ ],
+ "products": [
+  {
+   "id": "p001",
+   "name": "Кайзер курица",
+   "type": "dish",
+   "unit": "шт",
+   "priceKg": 0,
+   "sourceId": null,
+   "code1c": ""
+  },
+  {
+   "id": "p002",
+   "name": "Булочка кайзер",
+   "type": "raw",
+   "unit": "шт",
+   "priceKg": 36.28,
+   "sourceId": null,
+   "code1c": ""
+  },
+  {
+   "id": "p003",
+   "name": "Помидор",
+   "type": "raw",
+   "unit": "кг",
+   "priceKg": 900,
+   "sourceId": null,
+   "code1c": ""
+  },
+  {
+   "id": "p004",
+   "name": "Помидор очищенный",
+   "type": "semi",
+   "unit": "кг",
+   "priceKg": 0,
+   "sourceId": "p003",
+   "code1c": ""
+  },
+  {
+   "id": "p005",
+   "name": "Курица (филе)",
+   "type": "raw",
+   "unit": "кг",
+   "priceKg": 3400,
+   "sourceId": null,
+   "code1c": ""
+  },
+  {
+   "id": "p006",
+   "name": "Курица отварная",
+   "type": "semi",
+   "unit": "кг",
+   "priceKg": 0,
+   "sourceId": "p005",
+   "code1c": ""
+  },
+  {
+   "id": "p007",
+   "name": "Сыр моцарелла",
+   "type": "raw",
+   "unit": "кг",
+   "priceKg": 3000,
+   "sourceId": null,
+   "code1c": ""
+  },
+  {
+   "id": "p008",
+   "name": "Огурец свежий",
+   "type": "raw",
+   "unit": "кг",
+   "priceKg": 900,
+   "sourceId": null,
+   "code1c": ""
+  },
+  {
+   "id": "p009",
+   "name": "Огурец нарезанный",
+   "type": "semi",
+   "unit": "кг",
+   "priceKg": 0,
+   "sourceId": "p008",
+   "code1c": ""
+  },
+  {
+   "id": "p010",
+   "name": "Соус чесночный",
+   "type": "raw",
+   "unit": "кг",
+   "priceKg": 850,
+   "sourceId": null,
+   "code1c": ""
+  },
+  {
+   "id": "p011",
+   "name": "Кайзер говядин",
+   "type": "dish",
+   "unit": "шт",
+   "priceKg": 0,
+   "sourceId": null,
+   "code1c": ""
+  },
+  {
+   "id": "p012",
+   "name": "Огурец солёный",
+   "type": "raw",
+   "unit": "кг",
+   "priceKg": 900,
+   "sourceId": null,
+   "code1c": ""
+  },
+  {
+   "id": "p013",
+   "name": "Говядина",
+   "type": "raw",
+   "unit": "кг",
+   "priceKg": 9500,
+   "sourceId": null,
+   "code1c": ""
+  },
+  {
+   "id": "p014",
+   "name": "Говядина отварная",
+   "type": "semi",
+   "unit": "кг",
+   "priceKg": 0,
+   "sourceId": "p013",
+   "code1c": ""
+  },
+  {
+   "id": "p015",
+   "name": "Лист салата",
+   "type": "raw",
+   "unit": "кг",
+   "priceKg": 350,
+   "sourceId": null,
+   "code1c": ""
+  },
+  {
+   "id": "p016",
+   "name": "Салат подготовленный",
+   "type": "semi",
+   "unit": "кг",
+   "priceKg": 0,
+   "sourceId": "p015",
+   "code1c": ""
+  },
+  {
+   "id": "p017",
+   "name": "Соус песто",
+   "type": "raw",
+   "unit": "кг",
+   "priceKg": 1020,
+   "sourceId": null,
+   "code1c": ""
+  },
+  {
+   "id": "p018",
+   "name": "Круоссан курица",
+   "type": "dish",
+   "unit": "шт",
+   "priceKg": 0,
+   "sourceId": null,
+   "code1c": ""
+  },
+  {
+   "id": "p019",
+   "name": "Круассан",
+   "type": "raw",
+   "unit": "шт",
+   "priceKg": 120,
+   "sourceId": null,
+   "code1c": ""
+  },
+  {
+   "id": "p020",
+   "name": "Соус куркума",
+   "type": "raw",
+   "unit": "кг",
+   "priceKg": 1020,
+   "sourceId": null,
+   "code1c": ""
+  },
+  {
+   "id": "p021",
+   "name": "Целлофан (упаковка)",
+   "type": "raw",
+   "unit": "шт",
+   "priceKg": 6,
+   "sourceId": null,
+   "code1c": ""
+  },
+  {
+   "id": "p022",
+   "name": "Клаб макс",
+   "type": "dish",
+   "unit": "шт",
+   "priceKg": 0,
+   "sourceId": null,
+   "code1c": ""
+  },
+  {
+   "id": "p023",
+   "name": "Тост хлеб бриошь",
+   "type": "raw",
+   "unit": "шт",
+   "priceKg": 26.01,
+   "sourceId": null,
+   "code1c": ""
+  },
+  {
+   "id": "p024",
+   "name": "Соус сметанковый",
+   "type": "raw",
+   "unit": "кг",
+   "priceKg": 1136,
+   "sourceId": null,
+   "code1c": ""
+  },
+  {
+   "id": "p025",
+   "name": "Яичный блин",
+   "type": "raw",
+   "unit": "шт",
+   "priceKg": 68,
+   "sourceId": null,
+   "code1c": ""
+  },
+  {
+   "id": "p026",
+   "name": "Сыр сметанковый",
+   "type": "raw",
+   "unit": "кг",
+   "priceKg": 2750,
+   "sourceId": null,
+   "code1c": ""
+  },
+  {
+   "id": "p027",
+   "name": "Упаковка клаб",
+   "type": "raw",
+   "unit": "шт",
+   "priceKg": 55,
+   "sourceId": null,
+   "code1c": ""
+  },
+  {
+   "id": "p028",
+   "name": "Виктория",
+   "type": "dish",
+   "unit": "шт",
+   "priceKg": 0,
+   "sourceId": null,
+   "code1c": ""
+  },
+  {
+   "id": "p029",
+   "name": "Булочка Виктория ржаная",
+   "type": "raw",
+   "unit": "шт",
+   "priceKg": 54.7,
+   "sourceId": null,
+   "code1c": ""
+  },
+  {
+   "id": "p030",
+   "name": "Тост с курицей",
+   "type": "dish",
+   "unit": "шт",
+   "priceKg": 0,
+   "sourceId": null,
+   "code1c": ""
+  },
+  {
+   "id": "p031",
+   "name": "Майонез",
+   "type": "raw",
+   "unit": "кг",
+   "priceKg": 850,
+   "sourceId": null,
+   "code1c": ""
+  },
+  {
+   "id": "p032",
+   "name": "Биг сэндвич",
+   "type": "dish",
+   "unit": "шт",
+   "priceKg": 0,
+   "sourceId": null,
+   "code1c": ""
+  },
+  {
+   "id": "p033",
+   "name": "Булочка биг",
+   "type": "raw",
+   "unit": "шт",
+   "priceKg": 57,
+   "sourceId": null,
+   "code1c": ""
+  },
+  {
+   "id": "p034",
+   "name": "Круоссан с рулетом",
+   "type": "dish",
+   "unit": "шт",
+   "priceKg": 0,
+   "sourceId": null,
+   "code1c": ""
+  },
+  {
+   "id": "p035",
+   "name": "Соус цезарь",
+   "type": "raw",
+   "unit": "кг",
+   "priceKg": 1795,
+   "sourceId": null,
+   "code1c": ""
+  },
+  {
+   "id": "p036",
+   "name": "Куриный рулет",
+   "type": "raw",
+   "unit": "кг",
+   "priceKg": 3799,
+   "sourceId": null,
+   "code1c": ""
+  },
+  {
+   "id": "p037",
+   "name": "Круассан с красной рыбой",
+   "type": "dish",
+   "unit": "шт",
+   "priceKg": 0,
+   "sourceId": null,
+   "code1c": ""
+  },
+  {
+   "id": "p038",
+   "name": "Красная рыба",
+   "type": "raw",
+   "unit": "кг",
+   "priceKg": 5000,
+   "sourceId": null,
+   "code1c": ""
+  },
+  {
+   "id": "p039",
+   "name": "Рыба нарезанная",
+   "type": "semi",
+   "unit": "кг",
+   "priceKg": 0,
+   "sourceId": "p038",
+   "code1c": ""
+  },
+  {
+   "id": "p040",
+   "name": "Авокадо",
+   "type": "raw",
+   "unit": "кг",
+   "priceKg": 800,
+   "sourceId": null,
+   "code1c": ""
+  },
+  {
+   "id": "p041",
+   "name": "Творожный сыр",
+   "type": "raw",
+   "unit": "кг",
+   "priceKg": 2500,
+   "sourceId": null,
+   "code1c": ""
+  },
+  {
+   "id": "p042",
+   "name": "Соус сырный с укропом",
+   "type": "raw",
+   "unit": "кг",
+   "priceKg": 750,
+   "sourceId": null,
+   "code1c": ""
+  },
+  {
+   "id": "p043",
+   "name": "Куринное филе под сливочным соусом",
+   "type": "dish",
+   "unit": "шт",
+   "priceKg": 0,
+   "sourceId": null,
+   "code1c": ""
+  },
+  {
+   "id": "p044",
+   "name": "Шампиньоны",
+   "type": "raw",
+   "unit": "кг",
+   "priceKg": 2500,
+   "sourceId": null,
+   "code1c": ""
+  },
+  {
+   "id": "p045",
+   "name": "Шампиньоны обжаренные",
+   "type": "semi",
+   "unit": "кг",
+   "priceKg": 0,
+   "sourceId": "p044",
+   "code1c": ""
+  },
+  {
+   "id": "p046",
+   "name": "Сливки",
+   "type": "raw",
+   "unit": "кг",
+   "priceKg": 2200,
+   "sourceId": null,
+   "code1c": ""
+  },
+  {
+   "id": "p047",
+   "name": "Специи",
+   "type": "raw",
+   "unit": "кг",
+   "priceKg": 600,
+   "sourceId": null,
+   "code1c": ""
+  },
+  {
+   "id": "p048",
+   "name": "Лук",
+   "type": "raw",
+   "unit": "кг",
+   "priceKg": 240,
+   "sourceId": null,
+   "code1c": ""
+  },
+  {
+   "id": "p049",
+   "name": "Лук пассерованный",
+   "type": "semi",
+   "unit": "кг",
+   "priceKg": 0,
+   "sourceId": "p048",
+   "code1c": ""
+  },
+  {
+   "id": "p050",
+   "name": "Макароны",
+   "type": "raw",
+   "unit": "кг",
+   "priceKg": 500,
+   "sourceId": null,
+   "code1c": ""
+  },
+  {
+   "id": "p051",
+   "name": "Брокколи",
+   "type": "raw",
+   "unit": "кг",
+   "priceKg": 1000,
+   "sourceId": null,
+   "code1c": ""
+  },
+  {
+   "id": "p052",
+   "name": "Говядина в гурзинском стиле",
+   "type": "dish",
+   "unit": "шт",
+   "priceKg": 0,
+   "sourceId": null,
+   "code1c": ""
+  },
+  {
+   "id": "p053",
+   "name": "Перец болгарский",
+   "type": "raw",
+   "unit": "кг",
+   "priceKg": 1200,
+   "sourceId": null,
+   "code1c": ""
+  },
+  {
+   "id": "p054",
+   "name": "Рис",
+   "type": "raw",
+   "unit": "кг",
+   "priceKg": 700,
+   "sourceId": null,
+   "code1c": ""
+  },
+  {
+   "id": "p055",
+   "name": "Салат",
+   "type": "dish",
+   "unit": "шт",
+   "priceKg": 0,
+   "sourceId": null,
+   "code1c": ""
+  }
+ ],
+ "techcards": [
+  {
+   "id": "t001",
+   "dishId": "p001",
+   "category": "Сэндвичи",
+   "items": [
+    {
+     "productId": "p002",
+     "qty": 1,
+     "unit": "шт",
+     "noteRaw": "",
+     "noteDone": ""
+    },
+    {
+     "productId": "p004",
+     "qty": 17,
+     "unit": "кг",
+     "noteRaw": "100г",
+     "noteDone": "94г"
+    },
+    {
+     "productId": "p006",
+     "qty": 27,
+     "unit": "кг",
+     "noteRaw": "40г",
+     "noteDone": "28г"
+    },
+    {
+     "productId": "p007",
+     "qty": 17,
+     "unit": "кг",
+     "noteRaw": "",
+     "noteDone": ""
+    },
+    {
+     "productId": "p009",
+     "qty": 15,
+     "unit": "кг",
+     "noteRaw": "100г",
+     "noteDone": "92г"
+    },
+    {
+     "productId": "p010",
+     "qty": 15,
+     "unit": "кг",
+     "noteRaw": "",
+     "noteDone": ""
+    }
+   ],
+   "active": true
+  },
+  {
+   "id": "t002",
+   "dishId": "p011",
+   "category": "Сэндвичи",
+   "items": [
+    {
+     "productId": "p002",
+     "qty": 1,
+     "unit": "шт",
+     "noteRaw": "",
+     "noteDone": ""
+    },
+    {
+     "productId": "p012",
+     "qty": 15,
+     "unit": "кг",
+     "noteRaw": "129г",
+     "noteDone": "123г"
+    },
+    {
+     "productId": "p014",
+     "qty": 25,
+     "unit": "кг",
+     "noteRaw": "50г",
+     "noteDone": "25г"
+    },
+    {
+     "productId": "p016",
+     "qty": 10,
+     "unit": "кг",
+     "noteRaw": "95г",
+     "noteDone": "45г"
+    },
+    {
+     "productId": "p017",
+     "qty": 15,
+     "unit": "кг",
+     "noteRaw": "",
+     "noteDone": ""
+    },
+    {
+     "productId": "p007",
+     "qty": 17,
+     "unit": "кг",
+     "noteRaw": "",
+     "noteDone": ""
+    }
+   ],
+   "active": true
+  },
+  {
+   "id": "t003",
+   "dishId": "p018",
+   "category": "Сэндвичи",
+   "items": [
+    {
+     "productId": "p019",
+     "qty": 1,
+     "unit": "шт",
+     "noteRaw": "",
+     "noteDone": ""
+    },
+    {
+     "productId": "p020",
+     "qty": 15,
+     "unit": "кг",
+     "noteRaw": "",
+     "noteDone": ""
+    },
+    {
+     "productId": "p006",
+     "qty": 25,
+     "unit": "кг",
+     "noteRaw": "40г",
+     "noteDone": "28г"
+    },
+    {
+     "productId": "p004",
+     "qty": 15,
+     "unit": "кг",
+     "noteRaw": "100г",
+     "noteDone": "94г"
+    },
+    {
+     "productId": "p016",
+     "qty": 10,
+     "unit": "кг",
+     "noteRaw": "95г",
+     "noteDone": "40г"
+    },
+    {
+     "productId": "p021",
+     "qty": 1,
+     "unit": "шт",
+     "noteRaw": "",
+     "noteDone": ""
+    },
+    {
+     "productId": "p009",
+     "qty": 20,
+     "unit": "кг",
+     "noteRaw": "130",
+     "noteDone": "127"
+    }
+   ],
+   "active": true
+  },
+  {
+   "id": "t004",
+   "dishId": "p022",
+   "category": "Сэндвичи",
+   "items": [
+    {
+     "productId": "p023",
+     "qty": 3,
+     "unit": "шт",
+     "noteRaw": "",
+     "noteDone": ""
+    },
+    {
+     "productId": "p024",
+     "qty": 15,
+     "unit": "кг",
+     "noteRaw": "",
+     "noteDone": ""
+    },
+    {
+     "productId": "p004",
+     "qty": 30,
+     "unit": "кг",
+     "noteRaw": "100г",
+     "noteDone": "94г"
+    },
+    {
+     "productId": "p025",
+     "qty": 1,
+     "unit": "шт",
+     "noteRaw": "55г",
+     "noteDone": "57г"
+    },
+    {
+     "productId": "p009",
+     "qty": 18,
+     "unit": "кг",
+     "noteRaw": "118г",
+     "noteDone": "112г"
+    },
+    {
+     "productId": "p026",
+     "qty": 12,
+     "unit": "кг",
+     "noteRaw": "",
+     "noteDone": ""
+    },
+    {
+     "productId": "p027",
+     "qty": 1,
+     "unit": "шт",
+     "noteRaw": "",
+     "noteDone": ""
+    },
+    {
+     "productId": "p006",
+     "qty": 25,
+     "unit": "кг",
+     "noteRaw": "50г",
+     "noteDone": "38г"
+    }
+   ],
+   "active": true
+  },
+  {
+   "id": "t005",
+   "dishId": "p028",
+   "category": "Сэндвичи",
+   "items": [
+    {
+     "productId": "p029",
+     "qty": 1,
+     "unit": "шт",
+     "noteRaw": "",
+     "noteDone": ""
+    },
+    {
+     "productId": "p006",
+     "qty": 270,
+     "unit": "кг",
+     "noteRaw": "37г",
+     "noteDone": "25г"
+    },
+    {
+     "productId": "p026",
+     "qty": 200,
+     "unit": "кг",
+     "noteRaw": "",
+     "noteDone": ""
+    },
+    {
+     "productId": "p009",
+     "qty": 150,
+     "unit": "кг",
+     "noteRaw": "110г",
+     "noteDone": "101г"
+    },
+    {
+     "productId": "p016",
+     "qty": 300,
+     "unit": "кг",
+     "noteRaw": "95г",
+     "noteDone": "45г"
+    },
+    {
+     "productId": "p021",
+     "qty": 1,
+     "unit": "шт",
+     "noteRaw": "",
+     "noteDone": ""
+    },
+    {
+     "productId": "p010",
+     "qty": 150,
+     "unit": "кг",
+     "noteRaw": "",
+     "noteDone": ""
+    }
+   ],
+   "active": true
+  },
+  {
+   "id": "t006",
+   "dishId": "p030",
+   "category": "Сэндвичи",
+   "items": [
+    {
+     "productId": "p023",
+     "qty": 2,
+     "unit": "шт",
+     "noteRaw": "",
+     "noteDone": ""
+    },
+    {
+     "productId": "p031",
+     "qty": 100,
+     "unit": "кг",
+     "noteRaw": "",
+     "noteDone": ""
+    },
+    {
+     "productId": "p006",
+     "qty": 250,
+     "unit": "кг",
+     "noteRaw": "50г",
+     "noteDone": "39г"
+    },
+    {
+     "productId": "p016",
+     "qty": 170,
+     "unit": "кг",
+     "noteRaw": "",
+     "noteDone": ""
+    },
+    {
+     "productId": "p021",
+     "qty": 1,
+     "unit": "шт",
+     "noteRaw": "",
+     "noteDone": ""
+    },
+    {
+     "productId": "p004",
+     "qty": 0.3,
+     "unit": "шт",
+     "noteRaw": "125г",
+     "noteDone": "118г"
+    }
+   ],
+   "active": true
+  },
+  {
+   "id": "t007",
+   "dishId": "p032",
+   "category": "Сэндвичи",
+   "items": [
+    {
+     "productId": "p033",
+     "qty": 1,
+     "unit": "шт",
+     "noteRaw": "",
+     "noteDone": ""
+    },
+    {
+     "productId": "p010",
+     "qty": 150,
+     "unit": "кг",
+     "noteRaw": "",
+     "noteDone": ""
+    },
+    {
+     "productId": "p006",
+     "qty": 300,
+     "unit": "кг",
+     "noteRaw": "60г",
+     "noteDone": "48г"
+    },
+    {
+     "productId": "p004",
+     "qty": 300,
+     "unit": "кг",
+     "noteRaw": "90г",
+     "noteDone": "88г"
+    },
+    {
+     "productId": "p021",
+     "qty": 1,
+     "unit": "шт",
+     "noteRaw": "",
+     "noteDone": ""
+    },
+    {
+     "productId": "p009",
+     "qty": 300,
+     "unit": "кг",
+     "noteRaw": "100г",
+     "noteDone": "95г"
+    },
+    {
+     "productId": "p016",
+     "qty": 200,
+     "unit": "кг",
+     "noteRaw": "80г",
+     "noteDone": "60г"
+    }
+   ],
+   "active": true
+  },
+  {
+   "id": "t008",
+   "dishId": "p034",
+   "category": "Сэндвичи",
+   "items": [
+    {
+     "productId": "p019",
+     "qty": 1,
+     "unit": "шт",
+     "noteRaw": "",
+     "noteDone": ""
+    },
+    {
+     "productId": "p035",
+     "qty": 200,
+     "unit": "кг",
+     "noteRaw": "",
+     "noteDone": ""
+    },
+    {
+     "productId": "p036",
+     "qty": 250,
+     "unit": "кг",
+     "noteRaw": "",
+     "noteDone": ""
+    },
+    {
+     "productId": "p016",
+     "qty": 0.2,
+     "unit": "шт",
+     "noteRaw": "100г",
+     "noteDone": "85г"
+    },
+    {
+     "productId": "p004",
+     "qty": 150,
+     "unit": "кг",
+     "noteRaw": "100г",
+     "noteDone": "94г"
+    },
+    {
+     "productId": "p009",
+     "qty": 200,
+     "unit": "кг",
+     "noteRaw": "100г",
+     "noteDone": "95г"
+    },
+    {
+     "productId": "p007",
+     "qty": 200,
+     "unit": "кг",
+     "noteRaw": "",
+     "noteDone": ""
+    }
+   ],
+   "active": true
+  },
+  {
+   "id": "t009",
+   "dishId": "p037",
+   "category": "Сэндвичи",
+   "items": [
+    {
+     "productId": "p019",
+     "qty": 1,
+     "unit": "шт",
+     "noteRaw": "",
+     "noteDone": ""
+    },
+    {
+     "productId": "p039",
+     "qty": 450,
+     "unit": "кг",
+     "noteRaw": "",
+     "noteDone": ""
+    },
+    {
+     "productId": "p040",
+     "qty": 300,
+     "unit": "кг",
+     "noteRaw": "250",
+     "noteDone": "220"
+    },
+    {
+     "productId": "p041",
+     "qty": 220,
+     "unit": "кг",
+     "noteRaw": "",
+     "noteDone": ""
+    },
+    {
+     "productId": "p042",
+     "qty": 720,
+     "unit": "кг",
+     "noteRaw": "",
+     "noteDone": ""
+    }
+   ],
+   "active": true
+  },
+  {
+   "id": "t010",
+   "dishId": "p043",
+   "category": "блюда",
+   "items": [
+    {
+     "productId": "p006",
+     "qty": 50,
+     "unit": "кг",
+     "noteRaw": "83г",
+     "noteDone": "71г"
+    },
+    {
+     "productId": "p045",
+     "qty": 40,
+     "unit": "кг",
+     "noteRaw": "50г",
+     "noteDone": "25г"
+    },
+    {
+     "productId": "p046",
+     "qty": 50,
+     "unit": "кг",
+     "noteRaw": "33мл",
+     "noteDone": ""
+    },
+    {
+     "productId": "p047",
+     "qty": 20,
+     "unit": "кг",
+     "noteRaw": "4г",
+     "noteDone": ""
+    },
+    {
+     "productId": "p049",
+     "qty": 20,
+     "unit": "кг",
+     "noteRaw": "16г",
+     "noteDone": "7г"
+    },
+    {
+     "productId": "p050",
+     "qty": 70,
+     "unit": "кг",
+     "noteRaw": "58г",
+     "noteDone": "144г"
+    },
+    {
+     "productId": "p051",
+     "qty": 15,
+     "unit": "кг",
+     "noteRaw": "23г",
+     "noteDone": "28г"
+    }
+   ],
+   "active": true
+  },
+  {
+   "id": "t011",
+   "dishId": "p052",
+   "category": "блюда",
+   "items": [
+    {
+     "productId": "p014",
+     "qty": 50,
+     "unit": "кг",
+     "noteRaw": "83г",
+     "noteDone": "58г"
+    },
+    {
+     "productId": "p053",
+     "qty": 40,
+     "unit": "кг",
+     "noteRaw": "18г",
+     "noteDone": "9г"
+    },
+    {
+     "productId": "p004",
+     "qty": 40,
+     "unit": "кг",
+     "noteRaw": "16г",
+     "noteDone": "15г"
+    },
+    {
+     "productId": "p047",
+     "qty": 10,
+     "unit": "кг",
+     "noteRaw": "4г",
+     "noteDone": ""
+    },
+    {
+     "productId": "p054",
+     "qty": 70,
+     "unit": "кг",
+     "noteRaw": "36г",
+     "noteDone": "110г"
+    }
+   ],
+   "active": true
+  },
+  {
+   "id": "t012",
+   "dishId": "p055",
+   "category": "блюда",
+   "items": [
+    {
+     "productId": "p004",
+     "qty": 25,
+     "unit": "кг",
+     "noteRaw": "",
+     "noteDone": ""
+    },
+    {
+     "productId": "p009",
+     "qty": 15,
+     "unit": "кг",
+     "noteRaw": "",
+     "noteDone": ""
+    },
+    {
+     "productId": "p053",
+     "qty": 50,
+     "unit": "кг",
+     "noteRaw": "",
+     "noteDone": ""
+    },
+    {
+     "productId": "p016",
+     "qty": 50,
+     "unit": "кг",
+     "noteRaw": "",
+     "noteDone": ""
+    }
+   ],
+   "active": true
+  }
+ ],
+ "stock": {},
+ "operations": [],
+ "seq": 1
+}

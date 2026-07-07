@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>ТТ Алем — кухня</title>
+<style>
+:root{--bg:#f6f5f2;--card:#fff;--ink:#1c1c1a;--mut:#8a8880;--line:#e4e2db;--acc:#1d6e56;--accbg:#e2f3ec;--red:#b3362e;--redbg:#fbeceb;--amb:#9a6b10;--ambbg:#faf0da}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--ink);font-size:16px;padding-bottom:76px}
+header{position:sticky;top:0;background:var(--bg);padding:14px 16px 10px;display:flex;justify-content:space-between;align-items:center;z-index:5;border-bottom:1px solid var(--line)}
+header h1{font-size:17px;font-weight:600}
+header .who{font-size:13px;color:var(--mut)}
+main{padding:14px 14px 20px;max-width:640px;margin:0 auto}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;margin-bottom:12px}
+.btn{display:block;width:100%;padding:15px;border:none;border-radius:12px;background:var(--ink);color:#fff;font-size:17px;font-weight:600;cursor:pointer}
+.btn:active{transform:scale(.98)}
+.btn.sec{background:var(--card);color:var(--ink);border:1px solid var(--line)}
+.btn:disabled{opacity:.4}
+input,select{width:100%;padding:13px;border:1px solid var(--line);border-radius:10px;font-size:17px;background:var(--card);color:var(--ink)}
+input.big{font-size:26px;font-weight:600;text-align:center}
+label{display:block;font-size:13px;color:var(--mut);margin:12px 0 5px}
+.row{display:flex;gap:10px}.row>*{flex:1}
+.pill{display:inline-block;padding:3px 10px;border-radius:99px;font-size:12px;font-weight:600}
+.ok{background:var(--accbg);color:var(--acc)}.bad{background:var(--redbg);color:var(--red)}.warn{background:var(--ambbg);color:var(--amb)}
+nav{position:fixed;bottom:0;left:0;right:0;background:var(--card);border-top:1px solid var(--line);display:flex;z-index:5}
+nav button{flex:1;padding:10px 2px 12px;border:none;background:none;font-size:11px;color:var(--mut);cursor:pointer}
+nav button.on{color:var(--ink);font-weight:600}
+nav button .ic{font-size:20px;display:block;margin-bottom:2px}
+.list-item{display:flex;justify-content:space-between;align-items:center;padding:12px 2px;border-bottom:1px solid var(--line);gap:8px}
+.list-item:last-child{border:none}
+.list-item .nm{flex:1;font-size:15px}
+.list-item .vl{font-weight:600;font-size:15px;white-space:nowrap}
+.sub{font-size:12px;color:var(--mut)}
+h2{font-size:15px;font-weight:600;margin:4px 0 10px}
+.stepper{display:flex;align-items:center;gap:8px}
+.stepper button{width:42px;height:42px;border-radius:10px;border:1px solid var(--line);background:var(--card);font-size:22px;cursor:pointer}
+.stepper span{min-width:44px;text-align:center;font-size:20px;font-weight:600}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.metric{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px}
+.metric .l{font-size:12px;color:var(--mut)}.metric .v{font-size:22px;font-weight:600;margin-top:2px}
+.toast{position:fixed;top:14px;left:50%;transform:translateX(-50%);background:var(--ink);color:#fff;padding:11px 20px;border-radius:99px;font-size:14px;z-index:99;opacity:0;transition:.25s}
+.toast.show{opacity:1}
+.pinpad{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;max-width:280px;margin:16px auto}
+.pinpad button{padding:18px;font-size:22px;border:1px solid var(--line);border-radius:12px;background:var(--card);cursor:pointer}
+.dots{text-align:center;font-size:28px;letter-spacing:10px;min-height:38px;color:var(--ink)}
+.userbtn{padding:16px;font-size:17px;text-align:left}
+.tabbar{display:flex;gap:8px;margin-bottom:12px;overflow-x:auto}
+.tabbar button{padding:8px 14px;border-radius:99px;border:1px solid var(--line);background:var(--card);font-size:13px;white-space:nowrap;cursor:pointer}
+.tabbar button.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+.small{font-size:13px;padding:9px 12px;width:auto;display:inline-block}
+.neg{color:var(--red)}.pos{color:var(--acc)}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div id="toast" class="toast"></div>
+<script>
+'use strict';
+let TOKEN = sessionStorage.getItem('tok') || '';
+let ME = JSON.parse(sessionStorage.getItem('me') || 'null');
+let D = { products: [], techcards: [], stock: {} };
+let screen = 'work', pin = '', pickedUser = null;
+
+const $ = s => document.querySelector(s);
+const app = $('#app');
+const fmt = n => (Math.round(n * 100) / 100).toLocaleString('ru-RU');
+const money = n => fmt(n) + ' ₸';
+const today = () => new Date().toISOString().slice(0, 10);
+const P = id => D.products.find(p => p.id === id) || { name: '?', unit: '' };
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+function toast(msg, ms) {
+  const t = $('#toast'); t.textContent = msg; t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), ms || 1800);
+}
+async function api(path, method, body) {
+  const r = await fetch('/api' + path, {
+    method: method || 'GET',
+    headers: { 'Content-Type': 'application/json', 'x-token': TOKEN },
+    body: body ? JSON.stringify(body) : undefined
+  });
+  const j = await r.json();
+  if (r.status === 401 && ME) { logout(); throw new Error('Сессия истекла'); }
+  if (!r.ok) throw new Error(j.error || 'Ошибка');
+  return j;
+}
+function logout() { TOKEN = ''; ME = null; sessionStorage.clear(); render(); }
+async function reload() { D = await api('/bootstrap'); }
+
+// ===================== ВХОД =====================
+async function renderLogin() {
+  const users = await (await fetch('/api/users')).json();
+  if (!pickedUser) {
+    app.innerHTML = `<main style="padding-top:40px">
+      <h1 style="text-align:center;font-size:22px;margin-bottom:4px">ТТ Алем</h1>
+      <p style="text-align:center;color:var(--mut);font-size:14px;margin-bottom:24px">Учёт кухни · выберите себя</p>
+      ${users.map(u => `<button class="btn sec userbtn" style="margin-bottom:10px" onclick="pickUser('${u.id}')">${esc(u.name)} <span class="sub">· ${{cook:'повар',tech:'технолог',admin:'директор'}[u.role]}</span></button>`).join('')}
+    </main>`;
+    return;
+  }
+  app.innerHTML = `<main style="padding-top:40px;text-align:center">
+    <h1 style="font-size:20px">${esc(pickedUser.name)}</h1>
+    <p style="color:var(--mut);font-size:14px;margin:6px 0 10px">Введите PIN</p>
+    <div class="dots" id="dots"></div>
+    <div class="pinpad">
+      ${[1,2,3,4,5,6,7,8,9].map(n => `<button onclick="pinKey(${n})">${n}</button>`).join('')}
+      <button onclick="pickedUser=null;pin='';render()" style="font-size:14px">Назад</button>
+      <button onclick="pinKey(0)">0</button>
+      <button onclick="pin=pin.slice(0,-1);drawDots()" style="font-size:16px">⌫</button>
+    </div>
+  </main>`;
+  drawDots();
+}
+window.pickUser = function(id) {
+  fetch('/api/users').then(r => r.json()).then(us => { pickedUser = us.find(u => u.id === id); pin = ''; render(); });
+};
+function drawDots() { $('#dots').textContent = '●'.repeat(pin.length); }
+window.pinKey = async function(n) {
+  pin += n; drawDots();
+  if (pin.length === 4) {
+    try {
+      const r = await api('/login', 'POST', { userId: pickedUser.id, pin });
+      TOKEN = r.token; ME = r.user;
+      sessionStorage.setItem('tok', TOKEN); sessionStorage.setItem('me', JSON.stringify(ME));
+      screen = ME.role === 'cook' ? 'work' : ME.role === 'tech' ? 'cards' : 'cost';
+      await reload(); render();
+    } catch (e) { toast(e.message); pin = ''; drawDots(); }
+  }
+};
+
+// ===================== КАРКАС =====================
+const NAVS = {
+  cook: [['work','⚖️','Выработка'],['prod','🥪','Выпуск'],['rcpt','📦','Приход'],['stock','📋','Остатки']],
+  tech: [['cards','📖','Техкарты'],['goods','🏷️','Продукты'],['work','⚖️','Выработка'],['stock','📋','Остатки'],['loss','📉','Потери']],
+  admin: [['cost','💰','Калькуляция'],['loss','📉','Потери'],['stock','📋','Остатки'],['ops','🕓','Журнал'],['sync','🔄','1С']]
+};
+function shell(inner) {
+  const navs = NAVS[ME.role] || NAVS.admin;
+  app.innerHTML = `
+  <header><h1>ТТ Алем</h1><span class="who">${esc(ME.name)} · <a href="#" onclick="logout();return false" style="color:var(--mut)">выйти</a></span></header>
+  <main id="m">${inner}</main>
+  <nav>${navs.map(n => `<button class="${screen===n[0]?'on':''}" onclick="go('${n[0]}')"><span class="ic">${n[1]}</span>${n[2]}</button>`).join('')}</nav>`;
+}
+window.go = async function(s) { screen = s; await reload(); render(); };
+window.logout = logout;
+
+// ===================== ЭКРАНЫ =====================
+// --- Выработка (повар) ---
+let wSel = null;
+function scrWork() {
+  const semis = D.products.filter(p => p.type === 'semi');
+  if (!wSel) {
+    return `<h2>Выработка: что обработали?</h2>
+    ${semis.map(s => {
+      const raw = P(s.sourceId);
+      return `<div class="card" style="cursor:pointer" onclick="wPick('${s.id}')">
+        <b>${esc(raw.name)}</b> → ${esc(s.name)}
+        <div class="sub">остаток сырья: ${fmt((D.stock[raw.id]||{qty:0}).qty)} ${raw.unit}</div>
+      </div>`;
+    }).join('') || '<p class="sub">Нет пар сырьё → полуфабрикат. Технолог добавит в разделе «Продукты».</p>'}`;
+  }
+  const s = P(wSel), raw = P(s.sourceId);
+  return `<button class="btn sec small" onclick="wSel=null;render()">← Назад</button>
+  <div class="card" style="margin-top:12px">
+    <div class="pill ok">${esc(raw.name)} → ${esc(s.name)}</div>
+    <label>Вес ДО обработки, ${raw.unit}</label>
+    <input class="big" id="wb" type="number" step="0.01" inputmode="decimal" oninput="wCalc()">
+    <label>Вес ПОСЛЕ обработки, ${raw.unit}</label>
+    <input class="big" id="wa" type="number" step="0.01" inputmode="decimal" oninput="wCalc()">
+    <div id="wloss" style="margin:14px 0;text-align:center;font-size:15px;color:var(--mut)">Введите оба веса</div>
+    <button class="btn" id="wgo" disabled onclick="wSave()">Записать выработку</button>
+  </div>`;
+}
+window.wPick = function(id) { wSel = id; render(); };
+window.wCalc = function() {
+  const b = +$('#wb').value, a = +$('#wa').value, el = $('#wloss'), btn = $('#wgo');
+  if (b > 0 && a > 0 && a <= b) {
+    const loss = (1 - a / b) * 100;
+    el.innerHTML = `Потери: <b>${loss.toFixed(1)}%</b>`;
+    el.className = ''; el.style.cssText = 'margin:14px 0;text-align:center;font-size:16px';
+    btn.disabled = false;
+  } else if (a > b) { el.textContent = 'ПОСЛЕ больше чем ДО — проверьте'; btn.disabled = true; }
+  else { el.textContent = 'Введите оба веса'; btn.disabled = true; }
+};
+window.wSave = async function() {
+  const s = P(wSel);
+  try {
+    const r = await api('/ops', 'POST', { type: 'processing', rawId: s.sourceId, semiId: wSel, qtyBefore: +$('#wb').value, qtyAfter: +$('#wa').value });
+    toast(`Записано. Потери ${r.lossPct}%`);
+    wSel = null; await reload(); render();
+  } catch (e) { toast(e.message); }
+};
+
+// --- Выпуск блюд (повар) ---
+let pCnt = {};
+function scrProd() {
+  const dishes = D.products.filter(p => p.type === 'dish');
+  const anyCnt = Object.values(pCnt).some(v => v > 0);
+  return `<h2>Выпуск за смену · ${today()}</h2>
+  <div class="card">
+  ${dishes.map(d => `<div class="list-item">
+    <span class="nm">${esc(d.name)}</span>
+    <span class="stepper">
+      <button onclick="pStep('${d.id}',-1)">−</button>
+      <span>${pCnt[d.id] || 0}</span>
+      <button onclick="pStep('${d.id}',1)">+</button>
+    </span>
+  </div>`).join('')}
+  </div>
+  ${anyCnt ? `<button class="btn" onclick="pSave()">Записать выпуск</button>
+  <p class="sub" style="margin-top:8px;text-align:center">Спишется сырьё по техкартам, блюда встанут на остаток</p>` : ''}`;
+}
+window.pStep = function(id, d) { pCnt[id] = Math.max(0, (pCnt[id] || 0) + d); render(); };
+window.pSave = async function() {
+  try {
+    for (const [dishId, count] of Object.entries(pCnt)) {
+      if (count > 0) await api('/ops', 'POST', { type: 'production', dishId, count });
+    }
+    toast('Выпуск записан'); pCnt = {}; await reload(); render();
+  } catch (e) { toast(e.message); }
+};
+
+// --- Приход (повар/кладовщик) ---
+function scrRcpt() {
+  const raws = D.products.filter(p => p.type === 'raw');
+  return `<h2>Приход сырья на кухню</h2>
+  <div class="card">
+    <label>Продукт</label>
+    <select id="rp">${raws.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('')}</select>
+    <div class="row">
+      <div><label>Количество</label><input class="big" id="rq" type="number" step="0.01" inputmode="decimal"></div>
+      <div><label>Цена за ед., ₸</label><input class="big" id="rc" type="number" step="0.01" inputmode="decimal"></div>
+    </div>
+    <div style="height:14px"></div>
+    <button class="btn" onclick="rSave()">Оприходовать</button>
+    <p class="sub" style="margin-top:10px">Позже цена и приход будут тянуться из Поступлений ТМЗ в 1С автоматически.</p>
+  </div>`;
+}
+window.rSave = async function() {
+  const q = +$('#rq').value, c = +$('#rc').value;
+  if (!(q > 0) || !(c > 0)) return toast('Заполните количество и цену');
+  try {
+    await api('/ops', 'POST', { type: 'receipt', productId: $('#rp').value, qty: q, price: c });
+    toast('Приход записан'); await reload(); render();
+  } catch (e) { toast(e.message); }
+};
+
+// --- Остатки ---
+function scrStock() {
+  const groups = [['raw','Сырьё'],['semi','Полуфабрикаты'],['dish','Готовые блюда']];
+  let totalVal = 0;
+  const html = groups.map(([t, title]) => {
+    const rows = D.products.filter(p => p.type === t).map(p => {
+      const s = D.stock[p.id] || { qty: 0, value: 0 };
+      totalVal += s.value;
+      const neg = s.qty < -0.001;
+      return `<div class="list-item"><span class="nm">${esc(p.name)}<div class="sub">${money(s.avg || 0)}/${p.unit}</div></span>
+        <span class="vl ${neg?'neg':''}">${fmt(s.qty)} ${p.unit}</span></div>`;
+    }).join('');
+    return `<div class="card"><h2>${title}</h2>${rows || '<p class="sub">пусто</p>'}</div>`;
+  }).join('');
+  return `<div class="grid2" style="margin-bottom:12px">
+    <div class="metric"><div class="l">Стоимость остатков</div><div class="v">${money(totalVal)}</div></div>
+    <div class="metric"><div class="l">Позиции с минусом</div><div class="v">${Object.values(D.stock).filter(s=>s.qty<-0.001).length}</div></div>
+  </div>${html}
+  ${ME.role !== 'cook' ? `<button class="btn sec" onclick="go('inv')">Провести инвентаризацию</button>` : ''}`;
+}
+
+// --- Инвентаризация ---
+function scrInv() {
+  const items = D.products.filter(p => p.type !== 'dish');
+  return `<h2>Инвентаризация: фактические остатки</h2>
+  <div class="card">${items.map(p => {
+    const s = D.stock[p.id] || { qty: 0 };
+    return `<div class="list-item"><span class="nm">${esc(p.name)}<div class="sub">учётный: ${fmt(s.qty)} ${p.unit}</div></span>
+      <input data-inv="${p.id}" type="number" step="0.01" inputmode="decimal" placeholder="${fmt(s.qty)}" style="width:110px;text-align:center">
+    </div>`;
+  }).join('')}</div>
+  <button class="btn" onclick="invSave()">Зафиксировать</button>
+  <p class="sub" style="margin-top:8px;text-align:center">Пустое поле = без изменений. Расхождение спишется/оприходуется в деньгах.</p>`;
+}
+window.invSave = async function() {
+  const items = [];
+  document.querySelectorAll('[data-inv]').forEach(el => {
+    if (el.value !== '') items.push({ productId: el.dataset.inv, factQty: +el.value });
+  });
+  if (!items.length) return toast('Ничего не введено');
+  try {
+    const r = await api('/ops', 'POST', { type: 'inventory', items });
+    toast('Инвентаризация проведена. Расхождение: ' + money(r.sum));
+    screen = 'stock'; await reload(); render();
+  } catch (e) { toast(e.message); }
+};
+
+// --- Калькуляция (директор) ---
+let costData = null, costOpen = null;
+async function scrCost() {
+  costData = await api('/report/costing');
+  return `<h2>Живая калькуляция · себестоимость сейчас</h2>
+  ${costData.map(d => `<div class="card" style="cursor:pointer" onclick="costToggle('${d.dishId}')">
+    <div style="display:flex;justify-content:space-between;align-items:center">
+      <b>${esc(d.name)}</b><span style="font-size:19px;font-weight:700">${money(d.total)}</span>
+    </div>
+    ${costOpen === d.dishId ? `<div style="margin-top:10px;border-top:1px solid var(--line);padding-top:6px">
+      ${d.items.map(i => `<div class="list-item"><span class="nm">${esc(i.name)}<div class="sub">${fmt(i.qty)} ${i.unit==='кг'?'г':'шт'} × ${money(i.unitCost)}/${i.unit}</div></span><span class="vl">${money(i.cost)}</span></div>`).join('')}
+    </div>` : ''}
+  </div>`).join('')}
+  <p class="sub" style="text-align:center">Цены — из последних приходов и фактической выработки. Нажмите блюдо для состава.</p>`;
+}
+window.costToggle = function(id) { costOpen = costOpen === id ? null : id; render(); };
+
+// --- Потери ---
+async function scrLoss() {
+  const rows = await api('/report/losses');
+  if (!rows.length) return '<h2>Потери при обработке</h2><p class="sub">Пока нет данных — повара ещё не вносили выработку.</p>';
+  return `<h2>Потери при обработке</h2><div class="card">
+    ${rows.map(r => `<div class="list-item">
+      <span class="nm">${esc(r.product)}<div class="sub">${esc(r.user)} · операций: ${r.operations} · ${fmt(r.totalBefore)} → ${fmt(r.totalAfter)}</div></span>
+      <span class="pill ${r.avgLossPct > 35 ? 'bad' : r.avgLossPct > 20 ? 'warn' : 'ok'}">${r.avgLossPct}%</span>
+    </div>`).join('')}
+  </div>`;
+}
+
+// --- Журнал операций ---
+async function scrOps() {
+  const ops = await api('/ops?date=' + today());
+  const label = { receipt: '📦 Приход', processing: '⚖️ Выработка', production: '🥪 Выпуск', inventory: '📋 Инвентаризация', shipment: '🚚 Отгрузка' };
+  return `<h2>Журнал за ${today()}</h2>
+  ${ops.length ? ops.slice().reverse().map(o => {
+    let desc = '';
+    if (o.type === 'receipt') desc = `${esc(P(o.productId).name)}: ${fmt(o.qty)} × ${money(o.price)}`;
+    if (o.type === 'processing') desc = `${esc(P(o.rawId).name)} ${fmt(o.qtyBefore)} → ${esc(P(o.semiId).name)} ${fmt(o.qtyAfter)} (потери ${o.lossPct}%)`;
+    if (o.type === 'production') desc = `${esc(P(o.dishId).name)} × ${o.count}`;
+    if (o.type === 'inventory') desc = `позиций: ${o.items.length}`;
+    if (o.type === 'shipment') desc = `${esc(P(o.dishId).name)} × ${o.count}`;
+    return `<div class="card"><div style="display:flex;justify-content:space-between">
+      <b>${label[o.type]}</b><span class="sub">${o.ts.slice(11, 16)}</span></div>
+      <div style="margin:6px 0">${desc}</div>
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <span class="sub">${money(o.sum)}</span>
+        <button class="btn sec small" onclick="opDel('${o.id}')">Сторно</button>
+      </div></div>`;
+  }).join('') : '<p class="sub">Операций сегодня не было.</p>'}`;
+}
+window.opDel = async function(id) {
+  if (!confirm('Отменить операцию? Остатки будут восстановлены.')) return;
+  try { await api('/ops/' + id, 'DELETE'); toast('Отменено'); await reload(); render(); } catch (e) { toast(e.message); }
+};
+
+// --- 1С ---
+async function scrSync() {
+  const d = $('#syncDate') ? $('#syncDate').value : today();
+  const r = await api('/1c/export?date=' + d);
+  return `<h2>Обмен с 1С</h2>
+  <div class="card">
+    <label>Дата выгрузки</label>
+    <input type="date" id="syncDate" value="${d}" onchange="render()">
+    <div style="height:10px"></div>
+    <p style="font-size:14px">Документов к выгрузке: <b>${r.Документы.length}</b></p>
+    ${r.Документы.map(doc => `<div class="list-item"><span class="nm">${esc(doc.Комментарий)}<div class="sub">${esc(doc.Номенклатура.Наименование)}: ${fmt(doc.Номенклатура.Количество)} на ${money(doc.Номенклатура.Сумма)}</div></span></div>`).join('')}
+    <div style="height:10px"></div>
+    <button class="btn sec" onclick="syncCopy()">Скопировать JSON для 1С</button>
+    <p class="sub" style="margin-top:10px">Расширение ЖайыкАлемAPI будет забирать этот JSON по адресу /api/1c/export и создавать Комплектации номенклатуры с готовыми суммами. Пока — ручная проверка данных.</p>
+  </div>`;
+}
+window.syncCopy = async function() {
+  const d = $('#syncDate').value;
+  const r = await api('/1c/export?date=' + d);
+  await navigator.clipboard.writeText(JSON.stringify(r, null, 1));
+  toast('JSON скопирован');
+};
+
+// --- Продукты (технолог) ---
+function scrGoods() {
+  const groups = [['raw','Сырьё'],['semi','Полуфабрикаты'],['dish','Блюда']];
+  return `<h2>Номенклатура</h2>
+  ${groups.map(([t, title]) => `<div class="card"><h2>${title}</h2>
+    ${D.products.filter(p => p.type === t).map(p => `<div class="list-item">
+      <span class="nm">${esc(p.name)}${p.sourceId ? `<div class="sub">из: ${esc(P(p.sourceId).name)}</div>` : ''}${p.code1c ? `<div class="sub">1С: ${esc(p.code1c)}</div>` : ''}</span>
+      <button class="btn sec small" onclick="gEdit('${p.id}')">✎</button>
+    </div>`).join('')}
+  </div>`).join('')}
+  <button class="btn" onclick="gEdit(null)">+ Добавить позицию</button>`;
+}
+window.gEdit = function(id) {
+  const p = id ? P(id) : { name: '', type: 'raw', unit: 'кг', sourceId: '', code1c: '' };
+  const raws = D.products.filter(x => x.type === 'raw');
+  $('#m').innerHTML = `<button class="btn sec small" onclick="render()">← Назад</button>
+  <div class="card" style="margin-top:12px">
+    <label>Наименование</label><input id="gn" value="${esc(p.name)}">
+    <label>Тип</label><select id="gt" ${id?'disabled':''}>
+      <option value="raw" ${p.type==='raw'?'selected':''}>Сырьё</option>
+      <option value="semi" ${p.type==='semi'?'selected':''}>Полуфабрикат</option>
+      <option value="dish" ${p.type==='dish'?'selected':''}>Блюдо</option>
+    </select>
+    <label>Ед. изм.</label><select id="gu"><option ${p.unit==='кг'?'selected':''}>кг</option><option ${p.unit==='шт'?'selected':''}>шт</option></select>
+    <label>Исходное сырьё (для полуфабриката)</label>
+    <select id="gs"><option value="">—</option>${raws.map(r => `<option value="${r.id}" ${p.sourceId===r.id?'selected':''}>${esc(r.name)}</option>`).join('')}</select>
+    <label>Код в 1С</label><input id="gc" value="${esc(p.code1c || '')}">
+    <div style="height:14px"></div>
+    <button class="btn" onclick="gSave('${id || ''}')">Сохранить</button>
+  </div>`;
+};
+window.gSave = async function(id) {
+  const body = { name: $('#gn').value.trim(), type: $('#gt').value, unit: $('#gu').value, sourceId: $('#gs').value || null, code1c: $('#gc').value.trim() };
+  if (!body.name) return toast('Введите наименование');
+  try {
+    if (id) await api('/products/' + id, 'PUT', body);
+    else await api('/products', 'POST', body);
+    toast('Сохранено'); await reload(); render();
+  } catch (e) { toast(e.message); }
+};
+
+// --- Техкарты (технолог) ---
+let tcOpen = null;
+function scrCards() {
+  return `<h2>Техкарты</h2>
+  ${D.techcards.map(tc => {
+    const d = P(tc.dishId);
+    return `<div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;cursor:pointer" onclick="tcToggle('${tc.id}')">
+        <b>${esc(d.name)}</b><span class="sub">${tc.items.length} ингр. ${tc.active ? '' : '· выкл'}</span>
+      </div>
+      ${tcOpen === tc.id ? `<div style="margin-top:10px;border-top:1px solid var(--line);padding-top:4px" id="tcbody">
+        ${tc.items.map((it, i) => {
+          const p = P(it.productId);
+          return `<div class="list-item">
+            <span class="nm">${esc(p.name)}${it.noteRaw ? `<div class="sub">Альфия: сырое ${esc(it.noteRaw)} / готовое ${esc(it.noteDone)}</div>` : ''}</span>
+            <input type="number" step="0.1" value="${it.qty}" data-tcq="${i}" style="width:88px;text-align:center">
+            <span class="sub" style="min-width:22px">${p.unit === 'кг' ? 'г' : 'шт'}</span>
+            <button class="btn sec small" onclick="tcDel('${tc.id}',${i})">✕</button>
+          </div>`;
+        }).join('')}
+        <div class="row" style="margin-top:10px">
+          <select id="tcadd">${D.products.filter(p => p.type !== 'dish').map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('')}</select>
+          <button class="btn sec small" style="flex:0 0 auto" onclick="tcAdd('${tc.id}')">+ ингредиент</button>
+        </div>
+        <div style="height:10px"></div>
+        <button class="btn" onclick="tcSave('${tc.id}')">Сохранить техкарту</button>
+      </div>` : ''}
+    </div>`;
+  }).join('')}`;
+}
+window.tcToggle = function(id) { tcOpen = tcOpen === id ? null : id; render(); };
+function tcCollect(tc) {
+  const qs = document.querySelectorAll('[data-tcq]');
+  qs.forEach(el => { tc.items[+el.dataset.tcq].qty = +el.value || 0; });
+}
+window.tcAdd = function(id) {
+  const tc = D.techcards.find(t => t.id === id);
+  tcCollect(tc);
+  const pid = $('#tcadd').value;
+  tc.items.push({ productId: pid, qty: 0, unit: P(pid).unit });
+  render();
+};
+window.tcDel = function(id, i) {
+  const tc = D.techcards.find(t => t.id === id);
+  tcCollect(tc); tc.items.splice(i, 1); render();
+};
+window.tcSave = async function(id) {
+  const tc = D.techcards.find(t => t.id === id);
+  tcCollect(tc);
+  try { await api('/techcards/' + id, 'PUT', { items: tc.items }); toast('Техкарта сохранена'); await reload(); render(); }
+  catch (e) { toast(e.message); }
+};
+
+// ===================== РОУТЕР =====================
+const SCREENS = { work: scrWork, prod: scrProd, rcpt: scrRcpt, stock: scrStock, inv: scrInv, cost: scrCost, loss: scrLoss, ops: scrOps, sync: scrSync, goods: scrGoods, cards: scrCards };
+async function render() {
+  if (!ME) return renderLogin();
+  const fn = SCREENS[screen] || scrStock;
+  const out = fn();
+  shell(out instanceof Promise ? '<p class="sub">Загрузка…</p>' : out);
+  if (out instanceof Promise) {
+    try { $('#m').innerHTML = await out; } catch (e) { $('#m').innerHTML = `<p class="sub">${esc(e.message)}</p>`; }
+  }
+}
+(async () => {
+  if (ME) { try { await reload(); } catch (e) { logout(); return; } }
+  render();
+})();
+</script>
+</body>
+</html>
