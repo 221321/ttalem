@@ -1,4 +1,4 @@
-// ТТ Алем — учёт кухни бортпитания (v3)
+// ТТ Алем — учёт кухни бортпитания (v4)
 // Node.js без внешних зависимостей. Запуск: node server.js [порт]
 const http = require('http');
 const fs = require('fs');
@@ -11,6 +11,15 @@ const PUB = path.join(__dirname, 'public');
 
 let db = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
 
+// Категории продуктов (type)
+// raw      — покупные продукты (ингредиенты)
+// semi     — полуфабрикаты (нарезанные, замороженные, заготовки)
+// bread    — хлеб и тесто (собственная выпечка)
+// process  — выработка (чистка, варка, нарезка — пары до/после)
+// dish     — готовые блюда (на борт)
+
+const VALID_TYPES = ['raw', 'semi', 'bread', 'process', 'dish'];
+
 // ---------- миграция ----------
 (function migrate() {
   let changed = false;
@@ -20,8 +29,13 @@ let db = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
   }
   db.products.forEach(p => {
     if (!Array.isArray(p.recipe)) { p.recipe = []; changed = true; }
-    if (p.recipe.length && !p.recipeStatus) { p.recipeStatus = 'draft'; changed = true; }
     if (!Array.isArray(p.recipeLog)) { p.recipeLog = []; changed = true; }
+    // старый тип 'semi' с sourceId → 'process', без sourceId и с рецептом → 'semi'
+    if (p.type === 'semi') {
+      if (p.sourceId) { p.type = 'process'; changed = true; }
+      // с рецептом или без — оставляем 'semi'
+    }
+    if (p.recipe.length && !p.recipeStatus) { p.recipeStatus = 'draft'; changed = true; }
   });
   if (Array.isArray(db.techcards) && db.techcards.length) {
     db.techcards.forEach(tc => {
@@ -48,7 +62,6 @@ function save() {
 }
 function nid(prefix) { return prefix + (db.seq++).toString(36) + Date.now().toString(36).slice(-4); }
 function r2(x) { return Math.round(x * 100) / 100; }
-
 const sessions = {};
 
 // ---------- себестоимость ----------
@@ -83,7 +96,7 @@ function recipeCost(p, seen) {
   return { total: r2(total), items };
 }
 
-// ---------- журнал изменений рецептур ----------
+// ---------- журнал рецептур ----------
 function logRecipe(p, user, text) {
   p.recipeLog.push({ ts: new Date().toISOString(), user: user.name, text });
   if (p.recipeLog.length > 300) p.recipeLog = p.recipeLog.slice(-300);
@@ -167,7 +180,22 @@ function opInventory(o) {
   });
   return { type: 'inventory', items: rows, sum: r2(rows.reduce((a, r) => a + r.diffSum, 0)) };
 }
-const OPS = { receipt: opReceipt, processing: opProcessing, production: opProduction, inventory: opInventory };
+// акт списания специй/прочего
+function opWriteoff(o) {
+  const rows = o.items.map(it => {
+    const p = product(it.productId);
+    if (!p) throw new Error('Продукт не найден: ' + it.productId);
+    const uc = unitCost(it.productId);
+    const val = r2(uc * it.qty);
+    const s = stockOf(it.productId);
+    s.qty = r2(s.qty - it.qty);
+    s.value = r2(Math.max(0, s.value - val));
+    return { productId: it.productId, qty: it.qty, sum: val };
+  });
+  const total = r2(rows.reduce((a, r) => a + r.sum, 0));
+  return { type: 'writeoff', reason: o.reason || 'специи и прочее', items: rows, sum: total };
+}
+const OPS = { receipt: opReceipt, processing: opProcessing, production: opProduction, inventory: opInventory, writeoff: opWriteoff };
 
 // ---------- отчёты ----------
 function reportCosting() {
@@ -209,11 +237,7 @@ function reportOutput(from, to, hideMoney) {
       byUser: m.byUser
     })),
     production: Object.values(prod).map(m => {
-      const row = {
-        name: product(m.productId) ? product(m.productId).name : '?',
-        unit: product(m.productId) ? product(m.productId).unit : '',
-        count: m.count, byUser: m.byUser
-      };
+      const row = { name: product(m.productId) ? product(m.productId).name : '?', unit: product(m.productId) ? product(m.productId).unit : '', count: m.count, byUser: m.byUser };
       if (!hideMoney) row.sum = m.sum;
       return row;
     })
@@ -248,12 +272,7 @@ function export1c(date) {
     return { Наименование: p.name, Код: p.code1c || '', Количество: m.qty, Сумма: m.sum };
   });
   if (movedRows.length) {
-    docs.push({
-      ВидДокумента: 'ПеремещениеТМЗ', Дата: date, Время: t(),
-      СкладОтправитель: S.skladMain, СкладПолучатель: S.skladKitchen,
-      Комментарий: 'ТТ Алем: продукты в работу за ' + date,
-      Товары: movedRows
-    });
+    docs.push({ ВидДокумента: 'ПеремещениеТМЗ', Дата: date, Время: t(), СкладОтправитель: S.skladMain, СкладПолучатель: S.skladKitchen, Комментарий: 'ТТ Алем: продукты в работу за ' + date, Товары: movedRows });
   }
   const procMap = {};
   dayOps.filter(o => o.type === 'processing').forEach(o => {
@@ -265,12 +284,7 @@ function export1c(date) {
   });
   Object.values(procMap).forEach(g => {
     const raw = product(g.rawId), semi = product(g.semiId);
-    docs.push({
-      ВидДокумента: 'КомплектацияНоменклатуры', Дата: date, Время: t(), Склад: S.skladKitchen,
-      Комментарий: 'ТТ Алем: выработка ' + raw.name + ' → ' + semi.name,
-      Номенклатура: { Наименование: semi.name, Код: semi.code1c || '', Количество: g.qtyAfter, Сумма: g.sum },
-      Комплектующие: [{ Наименование: raw.name, Код: raw.code1c || '', Количество: g.qtyBefore, Сумма: g.sum }]
-    });
+    docs.push({ ВидДокумента: 'КомплектацияНоменклатуры', Дата: date, Время: t(), Склад: S.skladKitchen, Комментарий: 'ТТ Алем: выработка ' + raw.name + ' → ' + semi.name, Номенклатура: { Наименование: semi.name, Код: semi.code1c || '', Количество: g.qtyAfter, Сумма: g.sum }, Комплектующие: [{ Наименование: raw.name, Код: raw.code1c || '', Количество: g.qtyBefore, Сумма: g.sum }] });
   });
   const prodMap = {};
   dayOps.filter(o => o.type === 'production').forEach(o => {
@@ -285,16 +299,11 @@ function export1c(date) {
   });
   Object.entries(prodMap).forEach(([pid, g]) => {
     const d = product(pid);
-    docs.push({
-      ВидДокумента: 'КомплектацияНоменклатуры', Дата: date, Время: t(),
-      Склад: S.skladKitchen, СкладГотовойПродукции: d.type === 'dish' ? S.skladDone : S.skladKitchen,
-      Комментарий: 'ТТ Алем: выпуск ' + d.name,
-      Номенклатура: { Наименование: d.name, Код: d.code1c || '', Количество: g.count, Сумма: g.sum },
-      Комплектующие: Object.entries(g.wo).map(([cid, w]) => {
-        const p = product(cid);
-        return { Наименование: p.name, Код: p.code1c || '', Количество: w.qty, Сумма: w.sum };
-      })
-    });
+    docs.push({ ВидДокумента: 'КомплектацияНоменклатуры', Дата: date, Время: t(), Склад: S.skladKitchen, СкладГотовойПродукции: d.type === 'dish' ? S.skladDone : S.skladKitchen, Комментарий: 'ТТ Алем: выпуск ' + d.name, Номенклатура: { Наименование: d.name, Код: d.code1c || '', Количество: g.count, Сумма: g.sum }, Комплектующие: Object.entries(g.wo).map(([cid, w]) => { const p = product(cid); return { Наименование: p.name, Код: p.code1c || '', Количество: w.qty, Сумма: w.sum }; }) });
+  });
+  // акты списания (специи и прочее)
+  dayOps.filter(o => o.type === 'writeoff').forEach(o => {
+    docs.push({ ВидДокумента: 'СписаниеТМЗ', Дата: date, Время: t(), Склад: S.skladKitchen, Комментарий: 'ТТ Алем: ' + o.reason, Товары: o.items.map(it => { const p = product(it.productId); return { Наименование: p.name, Код: p.code1c || '', Количество: it.qty, Сумма: it.sum }; }) });
   });
   return docs;
 }
@@ -309,7 +318,6 @@ function auth(req) {
   return t && sessions[t] ? db.users.find(u => u.id === sessions[t]) : null;
 }
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.png': 'image/png', '.svg': 'image/svg+xml' };
-
 function productOut(p, role) {
   if (role === 'admin') return p;
   const c = Object.assign({}, p);
@@ -358,34 +366,24 @@ function route(req, res, u, data) {
   if (p === '/api/bootstrap' && req.method === 'GET') {
     const stock = {};
     Object.entries(db.stock).forEach(([pid, s]) => {
-      stock[pid] = isAdmin
-        ? { qty: s.qty, value: s.value, avg: s.qty > 0.0001 ? r2(s.value / s.qty) : r2(unitCost(pid)) }
-        : { qty: s.qty };
+      stock[pid] = isAdmin ? { qty: s.qty, value: s.value, avg: s.qty > 0.0001 ? r2(s.value / s.qty) : r2(unitCost(pid)) } : { qty: s.qty };
     });
-    return json(res, 200, {
-      products: db.products.map(x => productOut(x, role)),
-      stock, settings: isAdmin ? db.settings : undefined,
-      me: { id: user.id, name: user.name, role }
-    });
+    return json(res, 200, { products: db.products.map(x => productOut(x, role)), stock, settings: isAdmin ? db.settings : undefined, me: { id: user.id, name: user.name, role } });
   }
   if (p === '/api/settings' && req.method === 'PUT') {
     if (!isAdmin) return json(res, 403, { error: 'Только директор' });
     ['skladMain', 'skladKitchen', 'skladDone'].forEach(k => { if (data[k]) db.settings[k] = data[k]; });
-    save();
-    return json(res, 200, db.settings);
+    save(); return json(res, 200, db.settings);
   }
 
   // ---------- продукты ----------
   if (p === '/api/products' && req.method === 'POST') {
-    if (role === 'cook' && !(data.type === 'dish' || data.type === 'semi')) {
-      return json(res, 403, { error: 'Повар создаёт только рецептуры (блюда и полуфабрикаты)' });
-    }
-    const np = { id: nid('p'), name: (data.name || '').trim(), type: data.type || 'raw', unit: data.unit || 'кг',
-      priceKg: 0, sourceId: role === 'cook' ? null : (data.sourceId || null), code1c: role === 'cook' ? '' : (data.code1c || ''),
-      recipe: (data.recipe || []).filter(it => it.qty > 0), recipeLog: [], lastCost: 0 };
+    const type = data.type || 'raw';
+    if (!VALID_TYPES.includes(type)) return json(res, 400, { error: 'Неверный тип' });
+    if (role === 'cook' && type === 'raw') return json(res, 403, { error: 'Покупные продукты добавляет менеджер' });
+    const np = { id: nid('p'), name: (data.name || '').trim(), type, unit: data.unit || 'кг', priceKg: 0, sourceId: data.sourceId || null, code1c: role === 'cook' ? '' : (data.code1c || ''), recipe: (data.recipe || []).filter(it => it.qty > 0), recipeLog: [], lastCost: 0 };
     if (!np.name) return json(res, 400, { error: 'Введите наименование' });
-    if (np.recipe.length && np.type === 'raw') np.type = 'semi';
-    if (np.recipe.length) { np.recipeStatus = 'draft'; logRecipe(np, { name: user.name }, 'создал рецептуру'); }
+    if (np.recipe.length) { np.recipeStatus = 'draft'; logRecipe(np, user, 'создал рецептуру'); }
     db.products.push(np); save();
     return json(res, 200, productOut(np, role));
   }
@@ -405,20 +403,22 @@ function route(req, res, u, data) {
       diffRecipe(pr, user, data.name, cleanRecipe);
       if (data.name !== undefined) pr.name = String(data.name).trim();
       if (data.unit !== undefined) pr.unit = data.unit;
+      if (data.type !== undefined && VALID_TYPES.includes(data.type) && data.type !== 'raw') pr.type = data.type;
       if (cleanRecipe !== undefined) pr.recipe = cleanRecipe;
     } else {
       if (touchesRecipe) diffRecipe(pr, user, data.name, cleanRecipe);
-      ['name', 'type', 'unit', 'sourceId', 'code1c'].forEach(k => { if (data[k] !== undefined) pr[k] = data[k]; });
-      if (cleanRecipe !== undefined) {
-        pr.recipe = cleanRecipe;
-        if (pr.recipe.length && pr.type === 'raw') pr.type = 'semi';
-        if (!pr.recipe.length && pr.type === 'semi' && !pr.sourceId) pr.type = 'raw';
-      }
+      if (data.name !== undefined) pr.name = String(data.name).trim();
+      if (data.type !== undefined && VALID_TYPES.includes(data.type)) pr.type = data.type;
+      if (data.unit !== undefined) pr.unit = data.unit;
+      if (data.sourceId !== undefined) pr.sourceId = data.sourceId || null;
+      if (data.code1c !== undefined) pr.code1c = data.code1c;
+      if (cleanRecipe !== undefined) pr.recipe = cleanRecipe;
     }
     if (pr.recipe.length && !pr.recipeStatus) pr.recipeStatus = 'draft';
     save();
     return json(res, 200, productOut(pr, role));
   }
+
   // ---------- статусы рецептур ----------
   const mSt = p.match(/^\/api\/recipes\/([^/]+)\/status$/);
   if (mSt && req.method === 'POST') {
@@ -428,17 +428,14 @@ function route(req, res, u, data) {
     const a = data.action;
     if (a === 'submit') {
       if (st !== 'draft') return json(res, 400, { error: 'Уже передана' });
-      pr.recipeStatus = 'submitted';
-      logRecipe(pr, user, 'передал менеджеру');
+      pr.recipeStatus = 'submitted'; logRecipe(pr, user, 'передал менеджеру');
     } else if (a === 'approve') {
       if (role === 'cook') return json(res, 403, { error: 'Утверждает менеджер или директор' });
       if (st === 'approved') return json(res, 400, { error: 'Уже утверждена' });
-      pr.recipeStatus = 'approved';
-      logRecipe(pr, user, 'УТВЕРДИЛ рецептуру');
+      pr.recipeStatus = 'approved'; logRecipe(pr, user, 'УТВЕРДИЛ рецептуру');
     } else if (a === 'reopen') {
       if (!isAdmin) return json(res, 403, { error: 'Снять блок может только директор' });
-      pr.recipeStatus = 'draft';
-      logRecipe(pr, user, 'вернул на доработку');
+      pr.recipeStatus = 'draft'; logRecipe(pr, user, 'вернул на доработку');
     } else return json(res, 400, { error: 'Неизвестное действие' });
     save();
     return json(res, 200, { status: pr.recipeStatus });
@@ -455,12 +452,11 @@ function route(req, res, u, data) {
   if (p === '/api/ops' && req.method === 'POST') {
     if (data.type === 'receipt' && role === 'cook') return json(res, 403, { error: 'Нет прав' });
     if (data.type === 'inventory' && !isAdmin) return json(res, 403, { error: 'Инвентаризацию проводит директор' });
+    if (data.type === 'writeoff' && role === 'cook') return json(res, 403, { error: 'Акт списания оформляет менеджер или директор' });
     const fn = OPS[data.type];
     if (!fn) return json(res, 400, { error: 'Неизвестная операция' });
     const rec = fn(data);
-    rec.id = nid('o');
-    rec.ts = new Date().toISOString();
-    rec.userId = user.id;
+    rec.id = nid('o'); rec.ts = new Date().toISOString(); rec.userId = user.id;
     db.operations.push(rec); save();
     const out = Object.assign({}, rec);
     if (!isAdmin) { delete out.sum; delete out.price; delete out.writeoffs; }
@@ -496,4 +492,4 @@ function route(req, res, u, data) {
   json(res, 404, { error: 'not found' });
 }
 
-server.listen(PORT, () => console.log('ТТ Алем v3 запущен: http://localhost:' + PORT));
+server.listen(PORT, () => console.log('ТТ Алем v4 запущен: http://localhost:' + PORT));
