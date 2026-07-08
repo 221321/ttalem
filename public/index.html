@@ -213,10 +213,11 @@ function alertBar(){
 }
 function shell(inner){
   const navs=NAVS[ME.role]||NAVS.admin;
-  app.innerHTML=`
-  <header><h1>ТТ Алем</h1><span class="who">${esc(ME.name)} · ${ROLE[ME.role]||ME.role} · <a href="#" onclick="logout();return false" style="color:var(--mut)">выйти</a></span></header>
-  <main id="m">${(D.alerts&&D.alerts.length?(ME.role==='admin'||ME.role==='tech'?alertBar():'')):''}${inner}</main>
-  <nav>${navs.map(n=>'<button class="'+(screen===n[0]?'on':'')+'" onclick="go(\''+n[0]+'\')">'+'<span class="ic">'+n[1]+'</span>'+n[2]+'</button>').join('')}</nav>`;
+  const alertHtml=(D.alerts&&D.alerts.length&&(ME.role==='admin'||ME.role==='tech'))?alertBar():'';
+  const navHtml=navs.map(function(n){return '<button class="'+(screen===n[0]?'on':'')+'" onclick="go(\''+n[0]+'\')">'+'<span class="ic">'+n[1]+'</span>'+n[2]+'</button>';}).join('');
+  app.innerHTML='<header><h1>ТТ Алем</h1><span class="who">'+esc(ME.name)+' · '+(ROLE[ME.role]||ME.role)+' · <a href="#" onclick="logout();return false" style="color:var(--mut)">выйти</a></span></header>'
+    +'<main id="m">'+alertHtml+inner+'</main>'
+    +'<nav>'+navHtml+'</nav>';
 }
 window.go=async s=>{screen=s;wSel=null;wDone=null;exp={};await reload();render();};
 window.logout=logout;
