@@ -157,8 +157,12 @@ async function renderLogin(){
   app.innerHTML='<main style="padding-top:60px;max-width:400px;margin:0 auto">'
     +'<h1 style="text-align:center;font-size:24px;margin-bottom:30px">ТТ Алем</h1>'
     +'<div class="card" style="padding:24px">'
-    +'<label style="font-size:14px">Логин</label>'
-    +'<input id="loginname" type="text" autocomplete="off" style="font-size:17px;padding:14px" onkeydown="if(event.key===\'Enter\')$(\'#loginpin\').focus()">'
+    +'<label style="font-size:14px">Роль</label>'
+    +'<select id="logincat" style="font-size:17px;padding:14px">'
+    +'<option value="cook">Повар</option>'
+    +'<option value="tech">Менеджер</option>'
+    +'<option value="admin">Директор</option>'
+    +'</select>'
     +'<label style="font-size:14px">Пароль</label>'
     +'<input id="loginpin" type="password" inputmode="numeric" placeholder="****" style="font-size:22px;padding:14px;text-align:center;letter-spacing:6px" onkeydown="if(event.key===\'Enter\')doLogin()">'
     +'<div style="height:20px"></div>'
@@ -166,10 +170,10 @@ async function renderLogin(){
     +'</div></main>';
 }
 window.doLogin=async function(){
-  var name=$('#loginname').value.trim(), pinVal=$('#loginpin').value;
-  if(!name) return toast('Введите логин');
+  var cat=$('#logincat').value, pinVal=$('#loginpin').value;
   if(!pinVal) return toast('Введите пароль');
   try{
+    var r=await api('/login','POST',{category:cat,pin:pinVal});
     var r=await api('/login','POST',{name:name,pin:pinVal});
     TOKEN=r.token; ME=r.user;
     sessionStorage.setItem('tok',TOKEN); sessionStorage.setItem('me',JSON.stringify(ME));
