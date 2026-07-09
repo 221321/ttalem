@@ -695,12 +695,16 @@ function route(req, res, u, data) {
     if (!isAdmin) { delete out.sum; delete out.price; delete out.writeoffs; }
     return json(res, 200, out);
   }
-  if (p === '/api/ops' && req.method === 'GET') {
+if (p === '/api/ops' && req.method === 'GET') {
     let ops = db.operations;
     const date = u.searchParams.get('date');
+    const from = u.searchParams.get('from');
+    const to = u.searchParams.get('to');
     const type = u.searchParams.get('type');
     const mine = u.searchParams.get('mine');
     if (date) ops = ops.filter(o => o.ts.slice(0, 10) === date);
+    if (from) ops = ops.filter(o => o.ts.slice(0, 10) >= from);
+    if (to) ops = ops.filter(o => o.ts.slice(0, 10) <= to);
     if (type) ops = ops.filter(o => o.type === type);
     if (mine) ops = ops.filter(o => o.userId === user.id);
     ops = ops.slice(-500);
