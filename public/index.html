@@ -400,6 +400,7 @@ function scrNom(){
       recHtml+actBtn
     );
   }).join('') || '<p class="sub">В этой категории пусто.</p>';
+  var searchHtml='<div class="search"><input placeholder="Найти..." oninput="filterDom(this.value,\'nom-item\')" autocomplete="off"></div>';
   return tabsHtml+items+'<button class="btn" onclick="nomEdit(null)">+ Добавить позицию</button>';
 }
 window.nomEdit=function(id){
