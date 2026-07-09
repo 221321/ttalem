@@ -52,6 +52,7 @@ h2{font-size:14px;font-weight:600;margin:4px 0 10px}
 .search .clr{position:absolute;right:12px;top:50%;transform:translateY(-50%);font-size:15px;color:var(--mut);cursor:pointer;display:none;padding:4px}
 .srlist{background:var(--card);border:1px solid var(--line);border-radius:10px;max-height:260px;overflow-y:auto;margin-top:4px}
 .worklist{max-height:320px;overflow-y:auto;margin-bottom:8px}
+.nomlist{max-height:420px;overflow-y:auto;margin-bottom:8px}
 .sritem{padding:12px 14px;cursor:pointer;border-bottom:1px solid var(--line);font-size:14px}
 .sritem:last-child{border:none}
 .sritem:active{background:var(--bg)}
@@ -400,7 +401,7 @@ function scrNom(){
       recHtml+actBtn
     )+'</div>';
   }).join('') || '<p class="sub">В этой категории пусто.</p>';
-  return tabsHtml+searchHtml+items+'<button class="btn" onclick="nomEdit(null)">+ Добавить позицию</button>';
+  return tabsHtml+searchHtml+'<div class="nomlist">'+items+'</div>'+'<button class="btn" onclick="nomEdit(null)">+ Добавить позицию</button>';
 }
 window.nomEdit=function(id){
   var p=id?P(id):{name:'',type:nomTab,unit:nomTab==='dish'?'шт':'кг',sourceId:'',code1c:'',skladId:nomTab==='dish'?'sk7':'sk2',recipe:[]};
