@@ -175,21 +175,21 @@ window.doLogin=async function(){
     var r=await api('/login','POST',{userId:userId,pin:pinVal});
     TOKEN=r.token; ME=r.user;
     sessionStorage.setItem('tok',TOKEN); sessionStorage.setItem('me',JSON.stringify(ME));
-    screen=isCook(ME.role)?'work':ME.role==='tech'?'rec':'cost';
+    screen=isCook(ME.role)?'work':ME.role==='tech'?'nom':'cost';
     await reload(); render();
   }catch(e){ toast(e.message); $('#loginpin').value=''; }
 };
 
 // ====== КАРКАС ======
 var NAVS={
-  cook:      [['work','⚖️','Обработка'],['prod','🥪','Выпуск'],['nom','🏷️','Продукты'],['rec','📖','Рецептуры'],['output','📊','Выработка'],['stock','📋','Остатки']],
-  cook_prep: [['work','⚖️','Обработка'],['prod','🥪','Выпуск'],['nom','🏷️','Продукты'],['rec','📖','Рецептуры'],['output','📊','Выработка'],['stock','📋','Остатки']],
-  cook_sand: [['work','⚖️','Обработка'],['prod','🥪','Выпуск'],['nom','🏷️','Продукты'],['rec','📖','Рецептуры'],['output','📊','Выработка'],['stock','📋','Остатки']],
-  cook_hot:  [['work','⚖️','Обработка'],['prod','🥪','Выпуск'],['nom','🏷️','Продукты'],['rec','📖','Рецептуры'],['output','📊','Выработка'],['stock','📋','Остатки']],
-  cook_baker:[['work','⚖️','Обработка'],['prod','🥪','Выпуск'],['nom','🏷️','Продукты'],['rec','📖','Рецептуры'],['output','📊','Выработка'],['stock','📋','Остатки']],
-  cook_pastry:[['work','⚖️','Обработка'],['prod','🥪','Выпуск'],['nom','🏷️','Продукты'],['rec','📖','Рецептуры'],['output','📊','Выработка'],['stock','📋','Остатки']],
-  cook_head: [['work','⚖️','Обработка'],['prod','🥪','Выпуск'],['nom','🏷️','Продукты'],['rec','📖','Рецептуры'],['output','📊','Выработка'],['stock','📋','Остатки'],['move','🔄','Переместить']],
-  tech:      [['nom','🏷️','Продукты'],['rec','📖','Рецептуры'],['wo','🧂','Специи'],['output','📊','Выработка'],['stock','📋','Остатки']],
+  cook:      [['work','⚖️','Обработка'],['prod','🥪','Выпуск'],['nom','🏷️','Продукты'],['output','📊','Выработка'],['stock','📋','Остатки']],
+  cook_prep: [['work','⚖️','Обработка'],['prod','🥪','Выпуск'],['nom','🏷️','Продукты'],['output','📊','Выработка'],['stock','📋','Остатки']],
+  cook_sand: [['work','⚖️','Обработка'],['prod','🥪','Выпуск'],['nom','🏷️','Продукты'],['output','📊','Выработка'],['stock','📋','Остатки']],
+  cook_hot:  [['work','⚖️','Обработка'],['prod','🥪','Выпуск'],['nom','🏷️','Продукты'],['output','📊','Выработка'],['stock','📋','Остатки']],
+  cook_baker:[['work','⚖️','Обработка'],['prod','🥪','Выпуск'],['nom','🏷️','Продукты'],['output','📊','Выработка'],['stock','📋','Остатки']],
+  cook_pastry:[['work','⚖️','Обработка'],['prod','🥪','Выпуск'],['nom','🏷️','Продукты'],['output','📊','Выработка'],['stock','📋','Остатки']],
+  cook_head: [['work','⚖️','Обработка'],['prod','🥪','Выпуск'],['nom','🏷️','Продукты'],['output','📊','Выработка'],['stock','📋','Остатки'],['move','🔄','Переместить']],
+  tech:      [['nom','🏷️','Продукты'],['wo','🧂','Специи'],['output','📊','Выработка'],['stock','📋','Остатки']],
   admin:     [['cost','💰','Калькуляция'],['output','📊','Выработка'],['stock','📋','Остатки'],['sync','🔄','1С']]
 };
 function shell(inner){
@@ -319,7 +319,7 @@ window.pSave=async function(){
   busy=false;
 };
 
-// ====== РЕЦЕПТУРЫ ======
+// ====== ОБЩИЕ ФУНКЦИИ РЕЦЕПТУР ======
 function recRows(p,depth){
   depth=depth||0;
   return (p.recipe||[]).map(function(it){
@@ -340,126 +340,93 @@ function canEdit(p){
   if(st==='submitted') return ME.role==='tech';
   return true;
 }
-function scrRec(){
-  var all=D.products.filter(function(p){ return hasRecipe(p); });
-  var counts={draft:0,submitted:0,approved:0};
-  all.forEach(function(p){ counts[p.recipeStatus||'draft']++; });
-  var list=recFilter==='all'?all:all.filter(function(p){ return (p.recipeStatus||'draft')===recFilter; });
-  var grouped={};
-  list.forEach(function(p){ if(!grouped[p.type]) grouped[p.type]=[]; grouped[p.type].push(p); });
-  var tabs='<div class="tabbar">'
-    +[['all','Все ('+all.length+')'],['draft','✏️ ('+counts.draft+')'],['submitted','📨 ('+counts.submitted+')'],['approved','✅ ('+counts.approved+')']].map(function(t){
-      return '<button class="'+(recFilter===t[0]?'on':'')+'" onclick="recFilter=\''+t[0]+'\';renderInPlace()">'+t[1]+'</button>';
-    }).join('')+'</div>';
-  var body=CATS.filter(function(cat){ return grouped[cat.id]&&grouped[cat.id].length; }).map(function(cat){
-    return '<div class="hl">'+cat.icon+' '+cat.name+'</div>'
-      +grouped[cat.id].map(function(p){
-        var st=p.recipeStatus||'draft';
-        var editBtn=canEdit(p)?'<button class="btn sec sm" onclick="event.stopPropagation();recEdit(\''+p.id+'\')">✎</button>':'';
-        var actBtn='';
-        if(st==='draft'&&isCook(ME.role)) actBtn='<button class="btn grn" style="margin-top:8px" onclick="event.stopPropagation();recStatus(\''+p.id+'\',\'submit\',\'Передать менеджеру?\')">Передать менеджеру →</button>';
-        if(st!=='approved'&&ME.role==='tech') actBtn='<button class="btn grn" style="margin-top:8px" onclick="event.stopPropagation();recStatus(\''+p.id+'\',\'approve\',\'Утвердить?\')">✅ Утвердить</button>';
-        return card('r'+p.id,
-          '<span style="flex:1"><b>'+esc(p.name)+'</b> '+ST[st]+(!canEdit(p)?' 🔒':'')+' <span class="sub">'+esc(SK(p.skladId).name)+'</span></span>'+editBtn,
-          '<div style="background:var(--bg);border-radius:8px;padding:8px 10px">'+recRows(p)+'</div>'+actBtn
-        );
-      }).join('');
-  }).join('') || '<p class="sub">Пусто.</p>';
-  return tabs+body+'<button class="btn" onclick="recEdit(null)">+ Новая рецептура</button>';
-}
 window.recStatus=async function(id,action,msg){
   if(!confirm(msg)) return;
   try{ await api('/recipes/'+id+'/status','POST',{action:action}); toast('Готово'); await reload(); render(); }
   catch(e){ toast(e.message); }
 };
-window.recEdit=function(id){
-  var p=id?P(id):{name:'',type:'dish',unit:'шт',recipe:[],skladId:'sk7'};
-  editRecipe=JSON.parse(JSON.stringify(p.recipe||[]));
-  drawRecEdit(id,p);
-};
-function drawRecEdit(id,p){
-  var others=D.products.filter(function(x){ return x.id!==id; });
-  var rows=editRecipe.map(function(it,i){
-    var c=P(it.productId);
-    return '<div class="li"><span class="nm">'+esc(c.name)+' <span class="sub">'+c.unit+'</span></span>'
-      +'<input type="number" step="0.1" inputmode="decimal" value="'+it.qty+'" data-rq="'+i+'" style="width:88px;text-align:center">'
-      +'<button class="btn sec sm" onclick="recDelRow('+i+',\''+( id||'')+'\')">✕</button></div>';
-  }).join('');
-  var sklOpts=(D.sklads||[]).filter(function(s){ return !s.is1cMain; }).map(function(s){ return '<option value="'+s.id+'" '+(p.skladId===s.id?'selected':'')+'>'+esc(s.name)+'</option>'; }).join('');
-  var catOpts=CATS.filter(function(c){ return c.id!=='raw'; }).map(function(c){ return '<option value="'+c.id+'" '+(p.type===c.id?'selected':'')+'>'+c.icon+' '+c.name+'</option>'; }).join('');
-  var unitOpts=UNITS.map(function(u){ return '<option '+(p.unit===u?'selected':'')+'>'+u+'</option>'; }).join('');
-  $('#m').innerHTML='<button class="btn sec sm" onclick="render()">← Назад</button>'
-    +'<div class="card" style="margin-top:10px">'
-    +'<label>Наименование</label><input id="gn" value="'+esc(p.name)+'">'
-    +'<div class="row"><div><label>Категория</label><select id="gt">'+catOpts+'</select></div>'
-    +'<div><label>Единица</label><select id="gu">'+unitOpts+'</select></div></div>'
-    +'<label>Склад</label><select id="gsk">'+sklOpts+'</select>'
-    +'</div>'
-    +'<div class="card"><h2>Состав</h2>'
-    +'<div id="recrows">'+rows+'</div>'
-    +'<div class="search" style="margin-top:10px"><input id="recaddq" placeholder="Найти ингредиент..." oninput="renderRecSearch(this.value,\''+( id||'')+'\')" autocomplete="off"></div>'
-    +'<div id="recaddlist"></div></div>'
-    +'<button class="btn" onclick="recSave(\''+( id||'')+'\')">Сохранить черновик</button>';
-}
-window.renderRecSearch=function(q,id){
-  var el=$('#recaddlist'); if(!el) return;
-  if(!q){ el.innerHTML=''; return; }
-  var res=filterList(D.products.filter(function(x){ return x.id!==id; }),q).slice(0,8);
-  el.innerHTML='<div class="srlist">'+( res.map(function(p){ return '<div class="sritem" onclick="recAddRow(\''+p.id+'\',\''+id+'\')">'+CAT(p.type).icon+' '+esc(p.name)+' <span class="sub">'+p.unit+'</span></div>'; }).join('')||'<div class="sritem sub">Ничего не найдено</div>')+'</div>';
-};
-function collectRec(){ document.querySelectorAll('[data-rq]').forEach(function(el){ editRecipe[+el.dataset.rq].qty=+el.value||0; }); }
-function collectForm(){ return {name:$('#gn')?$('#gn').value:'',type:$('#gt')?$('#gt').value:'dish',unit:$('#gu')?$('#gu').value:'шт',skladId:$('#gsk')?$('#gsk').value:'sk7',recipe:editRecipe}; }
-window.recAddRow=function(pid,id){ collectRec(); if(!editRecipe.find(function(it){ return it.productId===pid; })) editRecipe.push({productId:pid,qty:0}); drawRecEdit(id||null,collectForm()); };
-window.recDelRow=function(i,id){ collectRec(); editRecipe.splice(i,1); drawRecEdit(id||null,collectForm()); };
-window.recSave=async function(id){
-  collectRec();
-  var body={name:$('#gn').value.trim(),type:$('#gt').value,unit:$('#gu').value,skladId:$('#gsk').value,recipe:editRecipe.filter(function(it){ return it.qty>0; })};
-  if(!body.name) return toast('Введите наименование');
-  if(!body.recipe.length) return toast('Добавьте хотя бы один ингредиент');
-  try{
-    if(id) await api('/products/'+id,'PUT',body); else await api('/products','POST',body);
-    toast('Сохранено (черновик)'); await reload(); render();
-  }catch(e){ toast(e.message); }
-};
-
-// ====== НОМЕНКЛАТУРА ======
+// ====== ПРОДУКТЫ (единый экран: карточка + состав + статус) ======
 function scrNom(){
   var list=D.products.filter(function(p){ return p.type===nomTab; });
   var tabsHtml='<div class="tabbar">'+CATS.map(function(c){ return '<button class="'+(nomTab===c.id?'on':'')+'" onclick="nomTab=\''+c.id+'\';renderInPlace()">'+c.icon+' '+c.name+'</button>'; }).join('')+'</div>';
   var items=list.map(function(p){
-    var recHtml=hasRecipe(p)?'<div style="background:var(--bg);border-radius:8px;padding:8px 10px">'+recRows(p)+'</div>':'<p class="sub">рецепта нет</p>';
-    var info=p.code1c?'<div class="sub">код 1С: '+esc(p.code1c)+'</div>':'';
-    if(p.sourceId) info+='<div class="sub">выработка из: '+esc(P(p.sourceId).name)+'</div>';
+    var st=p.recipeStatus||'draft';
+    var stPill=hasRecipe(p)?' '+ST[st]:'';
+    var lockIco=hasRecipe(p)&&!canEdit(p)?' 🔒':'';
+    var recHtml=hasRecipe(p)?'<div style="background:var(--bg);border-radius:8px;padding:8px 10px">'+recRows(p)+'</div>':'<p class="sub">Состав не заполнен — нажмите ✎ чтобы добавить</p>';
+    var actBtn='';
+    if(hasRecipe(p)){
+      if(st==='draft'&&isCook(ME.role)) actBtn='<button class="btn grn" style="margin-top:8px" onclick="event.stopPropagation();recStatus(\''+p.id+'\',\'submit\',\'Передать менеджеру? После этого изменить не сможете.\')">Передать менеджеру →</button>';
+      if(st!=='approved'&&ME.role==='tech') actBtn='<button class="btn grn" style="margin-top:8px" onclick="event.stopPropagation();recStatus(\''+p.id+'\',\'approve\',\'Утвердить рецептуру?\')">✅ Утвердить</button>';
+    }
+    var info='';
+    if(p.code1c) info+='<div class="sub">код 1С: '+esc(p.code1c)+'</div>';
+    if(p.sourceId&&p.sourceId!==p.id) info+='<div class="sub">выработка из: '+esc(P(p.sourceId).name)+'</div>';
+    var editBtn=(!hasRecipe(p)||canEdit(p))?'<button class="btn sec sm" onclick="event.stopPropagation();nomEdit(\''+p.id+'\')">✎</button>':'';
     return card('n'+p.id,
-      '<span style="flex:1"><b>'+esc(p.name)+'</b>'+info+'</span><button class="btn sec sm" onclick="event.stopPropagation();nomEdit(\''+p.id+'\')">✎</button>',
-      recHtml
+      '<span style="flex:1"><b>'+esc(p.name)+'</b>'+stPill+lockIco+info+'</span>'+editBtn,
+      recHtml+actBtn
     );
   }).join('') || '<p class="sub">В этой категории пусто.</p>';
   return tabsHtml+items+'<button class="btn" onclick="nomEdit(null)">+ Добавить позицию</button>';
 }
 window.nomEdit=function(id){
-  var p=id?P(id):{name:'',type:nomTab,unit:'кг',sourceId:'',code1c:'',skladId:'sk2'};
+  var p=id?P(id):{name:'',type:nomTab,unit:nomTab==='dish'?'шт':'кг',sourceId:'',code1c:'',skladId:nomTab==='dish'?'sk7':'sk2',recipe:[]};
+  editRecipe=JSON.parse(JSON.stringify(p.recipe||[]));
+  drawNomEdit(id,p);
+};
+function drawNomEdit(id,p){
   var procs=D.products.filter(function(x){ return x.type==='raw'&&x.id!==id; });
   var locked=id&&hasRecipe(p)&&(p.recipeStatus==='approved')&&ME.role!=='admin';
   var catOpts=CATS.map(function(c){ return '<option value="'+c.id+'" '+(p.type===c.id?'selected':'')+'>'+c.icon+' '+c.name+'</option>'; }).join('');
   var unitOpts=UNITS.map(function(u){ return '<option '+(p.unit===u?'selected':'')+'>'+u+'</option>'; }).join('');
   var sklOpts=(D.sklads||[]).map(function(s){ return '<option value="'+s.id+'" '+(p.skladId===s.id?'selected':'')+'>'+esc(s.name)+'</option>'; }).join('');
   var srcOpts='<option value="">— не используется —</option>'+procs.map(function(r){ return '<option value="'+r.id+'" '+(p.sourceId===r.id?'selected':'')+'>'+esc(r.name)+'</option>'; }).join('');
+  var rows=editRecipe.map(function(it,i){
+    var c=P(it.productId);
+    return '<div class="li"><span class="nm">'+esc(c.name)+' <span class="sub">'+c.unit+'</span></span>'
+      +'<input type="number" step="0.1" inputmode="decimal" value="'+it.qty+'" data-rq="'+i+'" style="width:88px;text-align:center">'
+      +'<button class="btn sec sm" onclick="nomDelRow('+i+',\''+(id||'')+'\')">✕</button></div>';
+  }).join('');
   $('#m').innerHTML='<button class="btn sec sm" onclick="render()">← Назад</button>'
     +'<div class="card" style="margin-top:10px">'
-    +(locked?'<p class="pill ok" style="margin-bottom:8px">✅ Рецептура утверждена</p>':'')
+    +(locked?'<p class="pill ok" style="margin-bottom:8px">✅ Рецептура утверждена — изменения через директора</p>':'')
     +'<label>Наименование</label><input id="gn" value="'+esc(p.name)+'" '+(locked?'disabled':'')+' >'
-    +'<label>Категория</label><select id="gt">'+catOpts+'</select>'
-    +'<label>Единица</label><select id="gu">'+unitOpts+'</select>'
+    +'<div class="row"><div><label>Категория</label><select id="gt">'+catOpts+'</select></div>'
+    +'<div><label>Единица</label><select id="gu">'+unitOpts+'</select></div></div>'
     +'<label>Склад</label><select id="gsk">'+sklOpts+'</select>'
-    +'<label>Исходный продукт (для выработки ⚖️)</label><select id="gs">'+srcOpts+'</select>'
-    +'<label>Код в 1С</label><input id="gc" value="'+esc(p.code1c||'')+'">'
-    +'<div style="height:12px"></div>'
-    +'<button class="btn" onclick="nomSave(\''+( id||'')+'\')">Сохранить</button>'
-    +'</div>';
+    +'<label>Исходный продукт (только для Выработки ⚖️ — пары «сырьё → обработанное»)</label><select id="gs">'+srcOpts+'</select>'
+    +'<label>Код в 1С (заполняет менеджер)</label><input id="gc" value="'+esc(p.code1c||'')+'">'
+    +'</div>'
+    +'<div class="card"><h2>Состав (рецептура)</h2>'
+    +(locked?'<p class="sub">Заблокировано после утверждения</p>':'')
+    +'<div id="recrows">'+rows+'</div>'
+    +(!locked?'<div class="search" style="margin-top:10px"><input placeholder="Найти и добавить ингредиент..." oninput="nomRecSearch(this.value,\''+(id||'')+'\')" autocomplete="off"></div><div id="recaddlist"></div>':'')
+    +'</div>'
+    +'<button class="btn" onclick="nomSave(\''+(id||'')+'\')">Сохранить</button>';
+}
+window.nomRecSearch=function(q,id){
+  var el=$('#recaddlist'); if(!el) return;
+  if(!q){ el.innerHTML=''; return; }
+  var res=filterList(D.products.filter(function(x){ return x.id!==id; }),q).slice(0,8);
+  el.innerHTML='<div class="srlist">'+(res.map(function(p){ return '<div class="sritem" onclick="nomAddRow(\''+p.id+'\',\''+id+'\')">'+CAT(p.type).icon+' '+esc(p.name)+' <span class="sub">'+p.unit+'</span></div>'; }).join('')||'<div class="sritem sub">Ничего не найдено</div>')+'</div>';
 };
+function collectNomRec(){ document.querySelectorAll('[data-rq]').forEach(function(el){ editRecipe[+el.dataset.rq].qty=+el.value||0; }); }
+function collectNomForm(id){
+  return {name:$('#gn')?$('#gn').value:'',type:$('#gt')?$('#gt').value:nomTab,unit:$('#gu')?$('#gu').value:'кг',
+    skladId:$('#gsk')?$('#gsk').value:'sk2',sourceId:$('#gs')?$('#gs').value:'',code1c:$('#gc')?$('#gc').value:'',recipe:editRecipe};
+}
+window.nomAddRow=function(pid,id){
+  collectNomRec();
+  if(!editRecipe.find(function(it){ return it.productId===pid; })) editRecipe.push({productId:pid,qty:0});
+  drawNomEdit(id||null,collectNomForm(id));
+};
+window.nomDelRow=function(i,id){ collectNomRec(); editRecipe.splice(i,1); drawNomEdit(id||null,collectNomForm(id)); };
 window.nomSave=async function(id){
-  var body={type:$('#gt').value,unit:$('#gu').value,skladId:$('#gsk')?$('#gsk').value:'sk2',sourceId:$('#gs').value||null,code1c:$('#gc').value.trim()};
+  collectNomRec();
+  var body={type:$('#gt').value,unit:$('#gu').value,skladId:$('#gsk')?$('#gsk').value:'sk2',recipe:editRecipe.filter(function(it){ return it.qty>0; })};
+  if($('#gs')) body.sourceId=$('#gs').value||null;
+  if($('#gc')) body.code1c=$('#gc').value.trim();
   if(!$('#gn').disabled) body.name=$('#gn').value.trim();
   if(body.name==='') return toast('Введите наименование');
   try{
@@ -699,7 +666,7 @@ window.moveSave=async function(){
 };
 
 // ====== РОУТЕР ======
-var SCREENS={work:scrWork,prod:scrProd,rec:scrRec,stock:scrStock,inv:scrInv,cost:scrCost,output:scrOutput,sync:scrSync,nom:scrNom,wo:scrWo,move:scrMove};
+var SCREENS={work:scrWork,prod:scrProd,stock:scrStock,inv:scrInv,cost:scrCost,output:scrOutput,sync:scrSync,nom:scrNom,wo:scrWo,move:scrMove};
 async function render(){
   if(!ME) return renderLogin();
   var fn=SCREENS[screen]||scrStock;
