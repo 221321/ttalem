@@ -380,8 +380,7 @@ window.recStatus=async function(id,action,msg){
 function scrNom(){
   var list=D.products.filter(function(p){ return p.type===nomTab; });
   var tabsHtml='<div class="tabbar">'+CATS.map(function(c){ return '<button class="'+(nomTab===c.id?'on':'')+'" onclick="nomTab=\''+c.id+'\';renderInPlace()">'+c.icon+' '+c.name+'</button>'; }).join('')+'</div>';
-  var searchHtml='<div class="search"><input placeholder="Найти..." oninput="filterDom(this.value,\'nom-item\')" autocomplete="off"></div>';
-  var items=list.map(function(p){
+return tabsHtml+searchHtml+items+'<button class="btn" onclick="nomEdit(null)">+ Добавить позицию</button>';
     var st=p.recipeStatus||'draft';
     var stPill=hasRecipe(p)?' '+ST[st]:'';
     var lockIco=hasRecipe(p)&&!canEdit(p)?' 🔒':'';
@@ -395,13 +394,12 @@ function scrNom(){
     if(p.code1c) info+='<div class="sub">код 1С: '+esc(p.code1c)+'</div>';
     if(p.sourceId&&p.sourceId!==p.id) info+='<div class="sub">выработка из: '+esc(P(p.sourceId).name)+'</div>';
     var editBtn=(!hasRecipe(p)||canEdit(p))?'<button class="btn sec sm" onclick="event.stopPropagation();nomEdit(\''+p.id+'\')">✎</button>':'';
-    return card('n'+p.id+' nom-item" data-name="'+esc(p.name.toLowerCase())+'',
+    return '<div class="nom-item" data-name="'+esc(p.name.toLowerCase())+'">'+card('n'+p.id,
       '<span style="flex:1"><b>'+esc(p.name)+'</b>'+stPill+lockIco+info+'</span>'+editBtn,
       recHtml+actBtn
-    );
+)+'</div>';
   }).join('') || '<p class="sub">В этой категории пусто.</p>';
-  var searchHtml='<div class="search"><input placeholder="Найти..." oninput="filterDom(this.value,\'nom-item\')" autocomplete="off"></div>';
-  return tabsHtml+items+'<button class="btn" onclick="nomEdit(null)">+ Добавить позицию</button>';
+return tabsHtml+searchHtml+items+'<button class="btn" onclick="nomEdit(null)">+ Добавить позицию</button>';
 }
 window.nomEdit=function(id){
   var p=id?P(id):{name:'',type:nomTab,unit:nomTab==='dish'?'шт':'кг',sourceId:'',code1c:'',skladId:nomTab==='dish'?'sk7':'sk2',recipe:[]};
