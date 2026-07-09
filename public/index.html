@@ -235,11 +235,11 @@ async function scrWork(){
       +'<button class="btn" onclick="wSel=null;wQ=\'\';render()">Обработать ещё</button>'+hist;
   }
   if(!wSel){
-    var listHtml=filtered.map(function(s){
+    var listHtml=procs.map(function(s){
       var raw=P(s.sourceId);
-      return '<div class="card tap" onclick="wPick(\''+s.id+'\')"><b>'+esc(raw.name)+'</b> → '+esc(s.name)+'</div>';
-    }).join('') || '<p class="sub">Ничего не найдено.</p>';
-    return '<div class="search"><input id="wqinput" placeholder="Найти продукт для обработки..." value="'+esc(wQ)+'" oninput="wQ=this.value;renderInPlace()" autocomplete="off"></div>'
+      return '<div class="card tap work-item" data-name="'+esc((raw.name+' '+s.name).toLowerCase())+'" onclick="wPick(\''+s.id+'\')"><b>'+esc(raw.name)+'</b> → '+esc(s.name)+'</div>';
+    }).join('') || '<p class="sub">Пока нет пар для обработки.</p>';
+    return '<div class="search"><input placeholder="Найти продукт для обработки..." oninput="filterDom(this.value,\'work-item\')" autocomplete="off"></div>'
       +listHtml+hist;
   }
   var s=P(wSel), raw=P(s.sourceId);
@@ -301,7 +301,7 @@ async function scrProd(){
     );
   }).join('') : '<p class="sub">В этот день выпуска не было.</p>';
   return '<h2>Выпуск готовой продукции</h2>'
-    +'<div class="search"><input placeholder="Найти блюдо..." oninput="document.querySelectorAll(\'.prod-item\').forEach(function(el){el.style.display=el.dataset.name.includes(this.value.toLowerCase())?\'\':\'none\'}.bind(this))" autocomplete="off"></div>'
+    +'<div class="search"><input placeholder="Найти блюдо..." oninput="filterDom(this.value,\'prod-item\')" autocomplete="off"></div>'
     +(approved.length
       ? '<div class="card">'+listHtml+'</div><button class="btn" '+(anyCnt?'':'disabled')+' onclick="pSave()">Записать выпуск</button>'
       : '<div class="card"><p class="sub">Нет утверждённых рецептур. Проверьте раздел «Рецептуры».</p></div>')
@@ -523,8 +523,8 @@ function scrWo(){
       +'<button class="btn sec sm" onclick="woDel('+i+')">✕</button></div>';
   }).join('');
   return '<h2>🧂 Акт списания</h2>'
-    +'<div class="search"><input id="woqinput" placeholder="Найти продукт для списания..." value="'+esc(woQ)+'" oninput="woQ=this.value;renderInPlace()" autocomplete="off"></div>'
-    +(woQ?'<div class="srlist">'+( filteredWo.slice(0,8).map(function(p){ return '<div class="sritem" onclick="woAdd(\''+p.id+'\');woQ=\'\';renderInPlace()">'+esc(p.name)+'</div>'; }).join('')||'<div class="sritem sub">Ничего</div>')+'</div>':'')
+    +'<div class="search"><input id="woqinput" placeholder="Найти продукт для списания..." oninput="woSearch(this.value)" autocomplete="off"></div>'
+    +'<div id="wolist"></div>'
     +(woItems.length
       ? '<div class="card">'+itemsHtml+'</div>'
         +'<div class="card"><label>Причина</label><select id="woreason">'
@@ -536,6 +536,20 @@ function scrWo(){
         +'<button class="btn red" onclick="woSave()">Списать</button>'
       : '<p class="sub">Найдите продукты выше и добавьте их в акт.</p>');
 }
+window.filterDom=function(q,cls){
+  var lo=q.toLowerCase();
+  document.querySelectorAll('.'+cls).forEach(function(el){
+    el.style.display=(!lo||el.dataset.name.includes(lo))?'':'none';
+  });
+};
+window.woSearch=function(q){
+  var el=$('#wolist'); if(!el) return;
+  if(!q){ el.innerHTML=''; return; }
+  var raws=D.products.filter(function(p){ return p.type==='raw'; });
+  var res=filterList(raws,q).slice(0,8);
+  el.innerHTML='<div class="srlist">'+(res.map(function(p){ return '<div class="sritem" onclick="woAddGo(\''+p.id+'\')">'+esc(p.name)+'</div>'; }).join('')||'<div class="sritem sub">Ничего</div>')+'</div>';
+};
+window.woAddGo=function(pid){ window.woAdd(pid); woQ=''; renderInPlace(); };
 window.woAdd=function(pid){ if(!woItems.find(function(it){ return it.productId===pid; })) woItems.push({productId:pid,qty:0}); };
 window.collectWo=function(){ document.querySelectorAll('[data-wq]').forEach(function(el){ woItems[+el.dataset.wq].qty=+el.value||0; }); };
 window.woDel=function(i){ collectWo(); woItems.splice(i,1); renderInPlace(); };
@@ -661,14 +675,21 @@ function scrMove(){
   var filtered=filterList(prods,moveQ);
   var skls=(D.sklads||[]).filter(function(s){ return !s.is1cMain; });
   return '<h2>🔄 Перемещение между складами</h2>'
-    +'<div class="search"><input id="mvqinput" placeholder="Найти продукт..." value="'+esc(moveQ)+'" oninput="moveQ=this.value;renderInPlace()" autocomplete="off"></div>'
-    +(moveQ&&!movePid?'<div class="srlist">'+filtered.slice(0,8).map(function(p){ return '<div class="sritem" onclick="movePid=\''+p.id+'\';moveQ=\'\';renderInPlace()">'+CAT(p.type).icon+' '+esc(p.name)+'</div>'; }).join('')+'</div>':'')
+    +'<div class="search"><input placeholder="Найти продукт..." oninput="mvSearch(this.value)" autocomplete="off"></div>'
+    +'<div id="mvlist"></div>'
     +(movePid?'<div class="card"><b>'+esc(P(movePid).name)+'</b> <button class="btn sec sm" style="display:inline-block;margin-left:8px" onclick="movePid=null;renderInPlace()">✕</button>'
       +'<div class="row"><div><label>Откуда</label><select id="mfrom">'+skls.map(function(s){ return '<option value="'+s.id+'">'+esc(s.name)+'</option>'; }).join('')+'</select></div>'
       +'<div><label>Куда</label><select id="mto">'+skls.map(function(s){ return '<option value="'+s.id+'">'+esc(s.name)+'</option>'; }).join('')+'</select></div></div>'
       +'<label>Количество, '+esc(P(movePid).unit)+'</label><input class="big" id="mqty" type="number" step="0.01" inputmode="decimal">'
       +'<div style="height:10px"></div><button class="btn" onclick="moveSave()">Переместить</button></div>':'');
 }
+window.mvSearch=function(q){
+  var el=$('#mvlist'); if(!el) return;
+  if(!q||movePid){ el.innerHTML=''; return; }
+  var prods=D.products.filter(function(p){ return p.type!=='dish'; });
+  var res=filterList(prods,q).slice(0,8);
+  el.innerHTML='<div class="srlist">'+(res.map(function(p){ return '<div class="sritem" onclick="movePid=\''+p.id+'\';renderInPlace()">'+CAT(p.type).icon+' '+esc(p.name)+'</div>'; }).join('')||'<div class="sritem sub">Ничего</div>')+'</div>';
+};
 window.moveSave=async function(){
   var qty=+$('#mqty').value, from=$('#mfrom').value, to=$('#mto').value;
   if(!(qty>0)) return toast('Введите количество');
