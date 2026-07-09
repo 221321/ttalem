@@ -113,11 +113,14 @@ const isCook = role => role === 'cook' || role.startsWith('cook_');
   // уведомления
   if (!Array.isArray(db.alerts)) { db.alerts = []; changed = true; }
 
+  // Чиним sourceId: продукт не может быть выработкой из самого себя
+  db.products.forEach(p => {
+    if (p.sourceId === p.id) { p.sourceId = null; changed = true; }
+  });
   // Восстанавливаем sourceId у process-продуктов если потерялся
   db.products.forEach(p => {
     if (p.type === 'process' && !p.sourceId) {
-      // ищем raw-продукт чьё имя входит в имя полуфабриката
-      const match = db.products.find(r => r.type === 'raw' && p.name.toLowerCase().includes(r.name.toLowerCase()));
+      const match = db.products.find(r => r.id !== p.id && r.type === 'raw' && r.name.toLowerCase() !== p.name.toLowerCase() && p.name.toLowerCase().includes(r.name.toLowerCase()));
       if (match) { p.sourceId = match.id; changed = true; }
     }
   });
@@ -639,7 +642,7 @@ function route(req, res, u, data) {
       if (data.name !== undefined) pr.name = String(data.name).trim();
       if (data.type !== undefined && VALID_TYPES.includes(data.type)) pr.type = data.type;
       if (data.unit !== undefined && VALID_UNITS.includes(data.unit)) pr.unit = data.unit;
-      if (data.sourceId !== undefined) pr.sourceId = data.sourceId || null;
+      if (data.sourceId !== undefined) pr.sourceId = (data.sourceId && data.sourceId !== pr.id) ? data.sourceId : null;
       if (data.code1c !== undefined) pr.code1c = data.code1c;
       if (data.skladId !== undefined) pr.skladId = data.skladId;
       if (cleanRecipe !== undefined) pr.recipe = cleanRecipe;
