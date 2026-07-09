@@ -77,7 +77,9 @@ h2{font-size:14px;font-weight:600;margin:4px 0 10px}
 /* ===== телефон: крупные кнопки, всё влезает ===== */
 @media(max-width:899px){
   nav{padding-bottom:env(safe-area-inset-bottom)}
-  nav button{font-size:10px;padding:11px 1px 13px}
+  nav button{font-size:12px;font-weight:600;padding:15px 1px 17px}
+  main{padding:12px 10px 20px}
+  body{padding-bottom:90px}
 }
 </style>
 </head>
@@ -152,40 +154,30 @@ function card(key,hdr,body){
 // ====== ВХОД ======
 async function renderLogin(){
   var users=await (await fetch('/api/users')).json();
-  if(!pickedUser){
-    app.innerHTML='<main style="padding-top:40px">'
-      +'<h1 style="text-align:center;font-size:22px;margin-bottom:4px">ТТ Алем</h1>'
-      +'<p style="text-align:center;color:var(--mut);font-size:14px;margin-bottom:24px">Кто вы?</p>'
-      +users.map(function(u){
-        return '<button class="btn sec" style="margin-bottom:10px;padding:16px;text-align:left" onclick="pickUser(\''+u.id+'\')">'+esc(u.name)+' <span class="sub">· '+(ROLE[u.role]||u.role)+'</span></button>';
-      }).join('')+'</main>';
-    return;
-  }
-  app.innerHTML='<main style="padding-top:40px;text-align:center">'
-    +'<h1 style="font-size:20px">'+esc(pickedUser.name)+'</h1>'
-    +'<p style="color:var(--mut);font-size:14px;margin:6px 0 10px">Введите PIN</p>'
-    +'<div class="dots" id="dots"></div>'
-    +'<div class="pinpad">'
-    +[1,2,3,4,5,6,7,8,9].map(function(n){ return '<button onclick="pinKey('+n+')">'+n+'</button>'; }).join('')
-    +'<button onclick="pickedUser=null;pin=\'\';render()" style="font-size:14px">Назад</button>'
-    +'<button onclick="pinKey(0)">0</button>'
-    +'<button onclick="pin=pin.slice(0,-1);drawDots()" style="font-size:16px">⌫</button>'
+  var opts=users.map(function(u){
+    return '<option value="'+u.id+'">'+esc(u.name)+' ('+(ROLE[u.role]||u.role)+')</option>';
+  }).join('');
+  app.innerHTML='<main style="padding-top:60px;max-width:400px;margin:0 auto">'
+    +'<h1 style="text-align:center;font-size:24px;margin-bottom:30px">ТТ Алем</h1>'
+    +'<div class="card" style="padding:24px">'
+    +'<label style="font-size:14px">Пользователь</label>'
+    +'<select id="loginuser" style="font-size:17px;padding:14px">'+opts+'</select>'
+    +'<label style="font-size:14px">Пароль</label>'
+    +'<input id="loginpin" type="password" inputmode="numeric" placeholder="****" style="font-size:22px;padding:14px;text-align:center;letter-spacing:6px" onkeydown="if(event.key===\'Enter\')doLogin()">'
+    +'<div style="height:20px"></div>'
+    +'<button class="btn" onclick="doLogin()">Войти</button>'
     +'</div></main>';
-  drawDots();
 }
-window.pickUser=function(id){ fetch('/api/users').then(function(r){ return r.json(); }).then(function(us){ pickedUser=us.find(function(u){ return u.id===id; });pin='';render(); }); };
-function drawDots(){ var d=$('#dots');if(d) d.textContent='●'.repeat(pin.length); }
-window.pinKey=async function(n){
-  pin+=n; drawDots();
-  if(pin.length===4){
-    try{
-      var r=await api('/login','POST',{userId:pickedUser.id,pin:pin});
-      TOKEN=r.token; ME=r.user;
-      sessionStorage.setItem('tok',TOKEN); sessionStorage.setItem('me',JSON.stringify(ME));
-      screen=isCook(ME.role)?'work':ME.role==='tech'?'rec':'cost';
-      await reload(); render();
-    }catch(e){ toast(e.message); pin=''; drawDots(); }
-  }
+window.doLogin=async function(){
+  var userId=$('#loginuser').value, pinVal=$('#loginpin').value;
+  if(!pinVal) return toast('Введите пароль');
+  try{
+    var r=await api('/login','POST',{userId:userId,pin:pinVal});
+    TOKEN=r.token; ME=r.user;
+    sessionStorage.setItem('tok',TOKEN); sessionStorage.setItem('me',JSON.stringify(ME));
+    screen=isCook(ME.role)?'work':ME.role==='tech'?'rec':'cost';
+    await reload(); render();
+  }catch(e){ toast(e.message); $('#loginpin').value=''; }
 };
 
 // ====== КАРКАС ======
