@@ -113,6 +113,20 @@ const isCook = role => role === 'cook' || role.startsWith('cook_');
   // уведомления
   if (!Array.isArray(db.alerts)) { db.alerts = []; changed = true; }
 
+  // Восстанавливаем sourceId у process-продуктов если потерялся
+  db.products.forEach(p => {
+    if (p.type === 'process' && !p.sourceId) {
+      // ищем raw-продукт чьё имя входит в имя полуфабриката
+      const match = db.products.find(r => r.type === 'raw' && p.name.toLowerCase().includes(r.name.toLowerCase()));
+      if (match) { p.sourceId = match.id; changed = true; }
+    }
+  });
+  // Убираем semi без рецепта и sourceId — они должны быть raw
+  db.products.forEach(p => {
+    if (p.type === 'semi' && !p.sourceId && (!p.recipe || !p.recipe.length)) {
+      p.type = 'raw'; changed = true;
+    }
+  });
   if (changed) fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 1));
 })();
 
