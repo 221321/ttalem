@@ -380,15 +380,16 @@ window.recStatus=async function(id,action,msg){
 function scrNom(){
   var list=D.products.filter(function(p){ return p.type===nomTab; });
   var tabsHtml='<div class="tabbar">'+CATS.map(function(c){ return '<button class="'+(nomTab===c.id?'on':'')+'" onclick="nomTab=\''+c.id+'\';renderInPlace()">'+c.icon+' '+c.name+'</button>'; }).join('')+'</div>';
-return tabsHtml+searchHtml+items+'<button class="btn" onclick="nomEdit(null)">+ Добавить позицию</button>';
+  var searchHtml='<div class="search"><input placeholder="Найти..." oninput="filterDom(this.value,\'nom-item\')" autocomplete="off"></div>';
+  var items=list.map(function(p){
     var st=p.recipeStatus||'draft';
     var stPill=hasRecipe(p)?' '+ST[st]:'';
     var lockIco=hasRecipe(p)&&!canEdit(p)?' 🔒':'';
     var recHtml=hasRecipe(p)?'<div style="background:var(--bg);border-radius:8px;padding:8px 10px">'+recRows(p)+'</div>':'<p class="sub">Состав не заполнен — нажмите ✎ чтобы добавить</p>';
     var actBtn='';
     if(hasRecipe(p)){
-      if(st==='draft'&&isCook(ME.role)) actBtn='<button class="btn grn" style="margin-top:8px" onclick="event.stopPropagation();recStatus(\''+p.id+'\',\'submit\',\'Передать менеджеру? После этого изменить не сможете.\')">Передать менеджеру →</button>';
-      if(st!=='approved'&&ME.role==='tech') actBtn='<button class="btn grn" style="margin-top:8px" onclick="event.stopPropagation();recStatus(\''+p.id+'\',\'approve\',\'Утвердить рецептуру?\')">✅ Утвердить</button>';
+      if(st==='draft'&&isCook(ME.role)) actBtn='<button class="btn grn" style="margin-top:8px" onclick="event.stopPropagation();recStatus(\''+p.id+'\',\'submit\',\'Передать менеджеру?\')">Передать менеджеру →</button>';
+      if(st!=='approved'&&ME.role==='tech') actBtn='<button class="btn grn" style="margin-top:8px" onclick="event.stopPropagation();recStatus(\''+p.id+'\',\'approve\',\'Утвердить?\')">✅ Утвердить</button>';
     }
     var info='';
     if(p.code1c) info+='<div class="sub">код 1С: '+esc(p.code1c)+'</div>';
@@ -397,9 +398,9 @@ return tabsHtml+searchHtml+items+'<button class="btn" onclick="nomEdit(null)">+ 
     return '<div class="nom-item" data-name="'+esc(p.name.toLowerCase())+'">'+card('n'+p.id,
       '<span style="flex:1"><b>'+esc(p.name)+'</b>'+stPill+lockIco+info+'</span>'+editBtn,
       recHtml+actBtn
-)+'</div>';
-}).join('') || '<p class="sub">В этой категории пусто.</p>';
-return tabsHtml+searchHtml+items+'<button class="btn" onclick="nomEdit(null)">+ Добавить позицию</button>';
+    )+'</div>';
+  }).join('') || '<p class="sub">В этой категории пусто.</p>';
+  return tabsHtml+searchHtml+items+'<button class="btn" onclick="nomEdit(null)">+ Добавить позицию</button>';
 }
 window.nomEdit=function(id){
   var p=id?P(id):{name:'',type:nomTab,unit:nomTab==='dish'?'шт':'кг',sourceId:'',code1c:'',skladId:nomTab==='dish'?'sk7':'sk2',recipe:[]};
