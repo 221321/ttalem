@@ -548,10 +548,11 @@ function route(req, res, u, data) {
     res.writeHead(200, { 'Content-Type': (MIME[path.extname(f)] || 'text/plain') + '; charset=utf-8' });
     return res.end(fs.readFileSync(f));
   }
-if (p === '/api/login' && req.method === 'POST') {
-    const login = String(data.name || '').trim().toLowerCase();
-    const user = db.users.find(x => x.name.toLowerCase() === login && x.pin === String(data.pin));
-    if (!user) return json(res, 401, { error: 'Неверный логин или пароль' });
+  if (p === '/api/login' && req.method === 'POST') {
+    const cat = String(data.category || '');
+    const catOk = u => cat === 'cook' ? isCook(u.role) : u.role === cat;
+    const user = db.users.find(x => catOk(x) && x.pin === String(data.pin));
+    if (!user) return json(res, 401, { error: 'Неверный PIN' });
     const token = crypto.randomBytes(16).toString('hex');
     sessions[token] = user.id;
     return json(res, 200, { token, user: { id: user.id, name: user.name, role: user.role } });
