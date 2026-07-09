@@ -241,7 +241,7 @@ async function scrWork(){
       return '<div class="card tap work-item" data-name="'+esc((raw.name+' '+s.name).toLowerCase())+'" onclick="wPick(\''+s.id+'\')"><b>'+esc(raw.name)+'</b> → '+esc(s.name)+'</div>';
     }).join('') || '<p class="sub">Пока нет пар для обработки.</p>';
     return '<div class="search"><input placeholder="Найти продукт для обработки..." oninput="filterDom(this.value,\'work-item\')" autocomplete="off"></div>'
-      +listHtml+hist;
+      +'<div class="worklist">'+listHtml+'</div>'+hist;
   }
   var s=P(wSel), raw=P(s.sourceId);
   return '<button class="btn sec sm" onclick="wSel=null;render()">← Назад</button>'
