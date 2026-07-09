@@ -548,15 +548,13 @@ function route(req, res, u, data) {
     res.writeHead(200, { 'Content-Type': (MIME[path.extname(f)] || 'text/plain') + '; charset=utf-8' });
     return res.end(fs.readFileSync(f));
   }
-  if (p === '/api/login' && req.method === 'POST') {
-    const user = db.users.find(x => x.id === data.userId && x.pin === String(data.pin));
-    if (!user) return json(res, 401, { error: 'Неверный PIN' });
+if (p === '/api/login' && req.method === 'POST') {
+    const login = String(data.name || '').trim().toLowerCase();
+    const user = db.users.find(x => x.name.toLowerCase() === login && x.pin === String(data.pin));
+    if (!user) return json(res, 401, { error: 'Неверный логин или пароль' });
     const token = crypto.randomBytes(16).toString('hex');
     sessions[token] = user.id;
     return json(res, 200, { token, user: { id: user.id, name: user.name, role: user.role } });
-  }
-  if (p === '/api/users' && req.method === 'GET') {
-    return json(res, 200, db.users.map(x => ({ id: x.id, name: x.name, role: x.role })));
   }
   const user = auth(req);
   if (!user) return json(res, 401, { error: 'Нужен вход' });
