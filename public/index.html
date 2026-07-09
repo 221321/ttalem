@@ -381,7 +381,7 @@ window.recStatus=async function(id,action,msg){
 function scrNom(){
   var list=D.products.filter(function(p){ return p.type===nomTab; });
   var tabsHtml='<div class="tabbar">'+CATS.map(function(c){ return '<button class="'+(nomTab===c.id?'on':'')+'" onclick="nomTab=\''+c.id+'\';renderInPlace()">'+c.icon+' '+c.name+'</button>'; }).join('')+'</div>';
-  var searchHtml='<div class="search"><input placeholder="Найти..." oninput="filterDom(this.value,\'nom-item\')" autocomplete="off"></div>';
+  var searchHtml='<div class="search"><input id="nomSearch" placeholder="Найти..." oninput="nSearch(this.value)" autocomplete="off"><span class="clr" onclick="nClear()">✕</span></div>';
   var items=list.map(function(p){
     var st=p.recipeStatus||'draft';
     var stPill=hasRecipe(p)?' '+ST[st]:'';
@@ -455,7 +455,18 @@ window.nomAddRow=function(pid,id){
   drawNomEdit(id||null,collectNomForm(id));
 };
 window.nomDelRow=function(i,id){ collectNomRec(); editRecipe.splice(i,1); drawNomEdit(id||null,collectNomForm(id)); };
-window.nomSave=async function(id){
+window.nSearch=function(v){
+  filterDom(v,'nom-item');
+  var c=document.querySelectorAll('.search .clr')[0];
+  if(c) c.style.display=v?'block':'none';
+};
+window.nClear=function(){
+  var i=$('#nomSearch');
+  if(i) i.value='';
+  nSearch('');
+  if(i) i.focus();
+};
+  window.nomSave=async function(id){
   collectNomRec();
   var body={type:$('#gt').value,unit:$('#gu').value,skladId:$('#gsk')?$('#gsk').value:'sk2',recipe:editRecipe.filter(function(it){ return it.qty>0; })};
   if($('#gs')) body.sourceId=$('#gs').value||null;
