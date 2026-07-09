@@ -255,7 +255,7 @@ async function scrWork(){
     +'<button class="btn" id="wgo" disabled onclick="wSave()">Записать</button>'
     +'</div>'+hist;
 }
-window.wPick=function(id){ wSel=id; render(); };
+window.wPick=function(id){ wSel=id; history.pushState({},''); render(); };
 window.wCalc=function(){
   var b=+$('#wb').value, a=+$('#wa').value, el=$('#wloss'), btn=$('#wgo');
   if(b>0&&a>0&&a<=b){ el.innerHTML='Потери: <b>'+((1-a/b)*100).toFixed(1)+'%</b>'; btn.disabled=false; }
@@ -656,7 +656,7 @@ window.mvSearch=function(q){
   if(!q||movePid){ el.innerHTML=''; return; }
   var prods=D.products.filter(function(p){ return p.type!=='dish'; });
   var res=filterList(prods,q).slice(0,8);
-  el.innerHTML='<div class="srlist">'+(res.map(function(p){ return '<div class="sritem" onclick="movePid=\''+p.id+'\';renderInPlace()">'+CAT(p.type).icon+' '+esc(p.name)+'</div>'; }).join('')||'<div class="sritem sub">Ничего</div>')+'</div>';
+  el.innerHTML='<div class="srlist">'+(res.map(function(p){ return '<div class="sritem" onclick="movePid=\''+p.id+'\';history.pushState({},\'\');renderInPlace()">'+CAT(p.type).icon+' '+esc(p.name)+'</div>'; }).join('')||'<div class="sritem sub">Ничего</div>')+'</div>';
 };
 window.moveSave=async function(){
   var qty=+$('#mqty').value, from=$('#mfrom').value, to=$('#mto').value;
@@ -678,6 +678,7 @@ async function render(){
     catch(e){ $('#m').innerHTML='<p class="sub">'+esc(e.message)+'</p>'; }
   }
 }
+  window.addEventListener('popstate', function(){ wSel=null; movePid=null; renderInPlace(); });
 (async function(){
   if(ME){ try{ await reload(); }catch(e){ logout(); return; } }
   render();
