@@ -604,7 +604,7 @@ function route(req, res, u, data) {
   if (p === '/api/products' && req.method === 'POST') {
     const type = data.type || 'raw';
     if (!VALID_TYPES.includes(type)) return json(res, 400, { error: 'Неверный тип' });
-    if (isCook(role) && type === 'raw') return json(res, 403, { error: 'Покупные продукты добавляет менеджер' });
+    // повар может добавлять любые продукты пока идёт наполнение базы
     const np = {
       id: nid('p'), name: (data.name || '').trim(), type, unit: VALID_UNITS.includes(data.unit) ? data.unit : 'кг',
       priceKg: 0, sourceId: data.sourceId || null, code1c: isCook(role) ? '' : (data.code1c || ''),
@@ -627,7 +627,7 @@ function route(req, res, u, data) {
       if (st === 'submitted' && isCook(role)) return json(res, 403, { error: 'Рецептура передана менеджеру' });
     }
     const cleanRecipe = data.recipe !== undefined ? data.recipe.filter(it => it.qty > 0 && it.productId !== pr.id) : undefined;
-    if (isCook(role)) {
+    if (isCook(role) && false) { // временно отключено — повар имеет полный доступ
       if (!pr.recipe.length && !(cleanRecipe && cleanRecipe.length)) return json(res, 403, { error: 'Нет прав' });
       diffRecipe(pr, user, data.name, cleanRecipe);
       if (data.name !== undefined) pr.name = String(data.name).trim();
@@ -712,7 +712,7 @@ function route(req, res, u, data) {
     return json(res, 200, reportCosting());
   }
   if (p === '/api/report/output') {
-    if (isCook(role) && role !== 'cook_head') return json(res, 403, { error: 'Нет прав' });
+    // все роли включая повара
     return json(res, 200, reportOutput(u.searchParams.get('from'), u.searchParams.get('to'), !isAdmin));
   }
   if (p === '/api/report/stock') {
