@@ -173,7 +173,6 @@ window.doLogin=async function(){
   var cat=$('#logincat').value, pinVal=$('#loginpin').value;
   if(!pinVal) return toast('Введите пароль');
   try{
-    var r=await api('/login','POST',{category:cat,pin:pinVal});
     var r=await api('/login','POST',{name:name,pin:pinVal});
     TOKEN=r.token; ME=r.user;
     sessionStorage.setItem('tok',TOKEN); sessionStorage.setItem('me',JSON.stringify(ME));
