@@ -154,15 +154,11 @@ function card(key,hdr,body){
 
 // ====== ВХОД ======
 async function renderLogin(){
-  var users=await (await fetch('/api/users')).json();
-  var opts=users.map(function(u){
-    return '<option value="'+u.id+'">'+esc(u.name)+' ('+(ROLE[u.role]||u.role)+')</option>';
-  }).join('');
   app.innerHTML='<main style="padding-top:60px;max-width:400px;margin:0 auto">'
     +'<h1 style="text-align:center;font-size:24px;margin-bottom:30px">ТТ Алем</h1>'
     +'<div class="card" style="padding:24px">'
-    +'<label style="font-size:14px">Пользователь</label>'
-    +'<select id="loginuser" style="font-size:17px;padding:14px">'+opts+'</select>'
+    +'<label style="font-size:14px">Логин</label>'
+    +'<input id="loginname" type="text" autocomplete="off" style="font-size:17px;padding:14px" onkeydown="if(event.key===\'Enter\')$(\'#loginpin\').focus()">'
     +'<label style="font-size:14px">Пароль</label>'
     +'<input id="loginpin" type="password" inputmode="numeric" placeholder="****" style="font-size:22px;padding:14px;text-align:center;letter-spacing:6px" onkeydown="if(event.key===\'Enter\')doLogin()">'
     +'<div style="height:20px"></div>'
@@ -170,10 +166,11 @@ async function renderLogin(){
     +'</div></main>';
 }
 window.doLogin=async function(){
-  var userId=$('#loginuser').value, pinVal=$('#loginpin').value;
+  var name=$('#loginname').value.trim(), pinVal=$('#loginpin').value;
+  if(!name) return toast('Введите логин');
   if(!pinVal) return toast('Введите пароль');
   try{
-    var r=await api('/login','POST',{userId:userId,pin:pinVal});
+    var r=await api('/login','POST',{name:name,pin:pinVal});
     TOKEN=r.token; ME=r.user;
     sessionStorage.setItem('tok',TOKEN); sessionStorage.setItem('me',JSON.stringify(ME));
     screen=isCook(ME.role)?'work':ME.role==='tech'?'nom':'cost';
