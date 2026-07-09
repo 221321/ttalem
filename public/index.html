@@ -196,13 +196,13 @@ window.pinKey=async n=>{
 
 // ====== КАРКАС ======
 const NAVS={
-  cook:       [['work','⚖️','Обработка'],['prod','🥪','Выпуск'],['rec','📖','Рецептуры'],['stock','📋','Остатки']],
-  cook_prep:  [['work','⚖️','Обработка'],['prod','🥪','Выпуск'],['rec','📖','Рецептуры'],['stock','📋','Остатки']],
-  cook_sand:  [['work','⚖️','Обработка'],['prod','🥪','Выпуск'],['rec','📖','Рецептуры'],['stock','📋','Остатки']],
-  cook_hot:   [['work','⚖️','Обработка'],['prod','🥪','Выпуск'],['rec','📖','Рецептуры'],['stock','📋','Остатки']],
-  cook_baker: [['work','⚖️','Обработка'],['prod','🥪','Выпуск'],['rec','📖','Рецептуры'],['stock','📋','Остатки']],
-  cook_pastry:[['work','⚖️','Обработка'],['prod','🥪','Выпуск'],['rec','📖','Рецептуры'],['stock','📋','Остатки']],
-  cook_head:  [['work','⚖️','Обработка'],['prod','🥪','Выпуск'],['rec','📖','Рецептуры'],['stock','📋','Остатки'],['move','🔄','Переместить']],
+  cook:       [['work','⚖️','Обработка'],['prod','🥪','Выпуск'],['nom','🏷️','Продукты'],['stock','📋','Остатки']],
+  cook_prep:  [['work','⚖️','Обработка'],['prod','🥪','Выпуск'],['nom','🏷️','Продукты'],['stock','📋','Остатки']],
+  cook_sand:  [['work','⚖️','Обработка'],['prod','🥪','Выпуск'],['nom','🏷️','Продукты'],['stock','📋','Остатки']],
+  cook_hot:   [['work','⚖️','Обработка'],['prod','🥪','Выпуск'],['nom','🏷️','Продукты'],['stock','📋','Остатки']],
+  cook_baker: [['work','⚖️','Обработка'],['prod','🥪','Выпуск'],['nom','🏷️','Продукты'],['stock','📋','Остатки']],
+  cook_pastry:[['work','⚖️','Обработка'],['prod','🥪','Выпуск'],['nom','🏷️','Продукты'],['stock','📋','Остатки']],
+  cook_head:  [['work','⚖️','Обработка'],['prod','🥪','Выпуск'],['nom','🏷️','Продукты'],['stock','📋','Остатки'],['move','🔄','Переместить']],
   tech:       [['nom','🏷️','Продукты'],['rec','📖','Рецептуры'],['wo','🧂','Специи'],['output','📊','Выработка'],['stock','📋','Остатки']],
   admin:      [['cost','💰','Калькуляция'],['output','📊','Выработка'],['stock','📋','Остатки'],['sync','🔄','1С']],
 };
@@ -621,6 +621,7 @@ window.nomEdit=id=>{
   const p=id?P(id):{name:'',type:nomTab,unit:'кг',sourceId:'',code1c:'',skladId:'sk2'};
   const procs=D.products.filter(x=>x.type==='raw'&&x.id!==id);
   const locked=id&&hasRecipe(p)&&(p.recipeStatus==='approved')&&ME.role!=='admin';
+  const isCookRole=isCook(ME.role);
   $('#m').innerHTML=`<button class="btn sec sm" onclick="render()">← Назад</button>
   <div class="card" style="margin-top:10px">
     ${locked?'<p class="pill ok" style="margin-bottom:8px">✅ Рецептура утверждена</p>':''}
@@ -628,15 +629,16 @@ window.nomEdit=id=>{
     <label>Категория</label><select id="gt">${CATS.map(c=>`<option value="${c.id}" ${p.type===c.id?'selected':''}>${c.icon} ${c.name}</option>`).join('')}</select>
     <label>Единица</label><select id="gu">${UNITS.map(u=>`<option ${p.unit===u?'selected':''}>${u}</option>`).join('')}</select>
     <label>Склад</label><select id="gsk">${D.sklads.map(s=>`<option value="${s.id}" ${p.skladId===s.id?'selected':''}>${esc(s.name)}</option>`).join('')}</select>
-    <label>Исходный продукт (для выработки ⚖️)</label>
-    <select id="gs"><option value="">— не используется —</option>${procs.map(r=>`<option value="${r.id}" ${p.sourceId===r.id?'selected':''}>${esc(r.name)}</option>`).join('')}</select>
-    <label>Код в 1С</label><input id="gc" value="${esc(p.code1c||'')}">
+    ${!isCookRole?`<label>Исходный продукт (для выработки ⚖️)</label>
+    <select id="gs"><option value="">— не используется —</option>${procs.map(r=>'<option value="'+r.id+'" '+(p.sourceId===r.id?'selected':'')+'>'+esc(r.name)+'</option>').join('')}</select>
+    <label>Код в 1С</label><input id="gc" value="${esc(p.code1c||'')}">`:``}
     <div style="height:12px"></div>
     <button class="btn" onclick="nomSave('${id||''}')">Сохранить</button>
   </div>`;
 };
 window.nomSave=async id=>{
-  const body={type:$('#gt').value,unit:$('#gu').value,sourceId:$('#gs').value||null,code1c:$('#gc').value.trim(),skladId:$('#gsk').value};
+  const body={type:$('#gt').value,unit:$('#gu').value,skladId:$('#gsk')?$('#gsk').value:'sk2'};
+  if(!isCook(ME.role)){body.sourceId=$('#gs').value||null;body.code1c=$('#gc').value.trim();}
   if(!$('#gn').disabled)body.name=$('#gn').value.trim();
   if(body.name==='')return toast('Введите наименование');
   try{
