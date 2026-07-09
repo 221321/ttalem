@@ -278,6 +278,7 @@ window.wCalc=()=>{
 window.wSave=async()=>{
   if(busy)return;
   const s=P(wSel),b=+$('#wb').value,a=+$('#wa').value;
+  if(!s.sourceId){toast('У этого продукта не указан исходный (настройте в Продуктах у менеджера)');busy=false;return;}
   try{
     busy=true;$('#wgo').disabled=true;
     const recent=await api('/ops?date='+today()+'&type=processing&mine=1');
@@ -299,9 +300,9 @@ async function scrProd(){
   const dayOps=await api('/ops?date='+date+'&type=production');
   const anyCnt=Object.values(pCnt).some(v=>v>0);
   return `<h2>Выпуск готовой продукции</h2>
-  ${searchBox('pq',pQ,'Найти блюдо или полуфабрикат...')}
-  ${filtered.length?`<div class="card">
-  ${filtered.map(d=>`<div class="li">
+  <div class="search" style="margin-bottom:10px"><input id="pqinput" placeholder="Найти блюдо..." value="${esc(pQ)}" oninput="pQ=this.value;document.querySelectorAll('.prod-item').forEach(el=>{el.style.display=el.dataset.name.includes(this.value.toLowerCase())?'':'none'})" autocomplete="off"></div>
+  ${approved.length?`<div class="card">
+  ${approved.map(d=>`<div class="li prod-item" data-name="${d.name.toLowerCase()}" style="${pQ&&!d.name.toLowerCase().includes(pQ.toLowerCase())?'display:none':''}">
     <span class="nm">${CAT(d.type).icon} ${esc(d.name)}</span>
     <span class="step">
       <button onclick="pStep('${d.id}',-1)">−</button>
@@ -311,7 +312,7 @@ async function scrProd(){
   </div>`).join('')}
   </div>
   <button class="btn" ${anyCnt?'':'disabled'} onclick="pSave()">Записать выпуск</button>`
-  :'<p class="sub">Нет утверждённых рецептур по вашему запросу.</p>'}
+  :'<p class="sub">Нет утверждённых рецептур. Проверьте раздел «Рецептуры».</p>'}
   <div class="hl">Выпущено за <input type="date" value="${date}" onchange="pDate=this.value;render()" style="width:auto;padding:4px 8px;font-size:12px;display:inline-block">:</div>
   ${dayOps.length?dayOps.slice().reverse().map(o=>card('ph'+o.id,
     `<span><b>${CAT(P(o.productId).type).icon} ${esc(P(o.productId).name)} × ${fmt(o.count)}</b> <span class="sub">${opTime(o)}</span></span>`,
