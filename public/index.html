@@ -97,7 +97,7 @@ var screen = 'work';
 var pin = '', pickedUser = null;
 var exp = {}, busy = false;
 var wSel = null, wDone = null, wQ = '';
-var pCnt = {}, pDate = null;
+var pCnt = {}, pDate = null, pFrom = null, pTo = null;
 var stockTab = 'raw', nomTab = 'raw', recFilter = 'all';
 var outFrom = null, outTo = null;
 var syncDate = null, rcptOpen = false;
@@ -294,8 +294,8 @@ window.wSave=async function(){
 // ====== ПОВАР: ВЫПУСК ======
 async function scrProd(){
   var approved=D.products.filter(function(p){ return hasRecipe(p)&&p.recipeStatus==='approved'; });
-  var date=pDate||today();
-  var dayOps=await api('/ops?date='+date+'&type=production');
+  var from=pFrom||today(), to=pTo||today();
+  var dayOps=await api('/ops?from='+from+'&to='+to+'&type=production');
   var anyCnt=Object.values(pCnt).some(function(v){ return v>0; });
   var listHtml=approved.map(function(d){
     return '<div class="li prod-item" data-name="'+esc(d.name.toLowerCase())+'">'
@@ -312,15 +312,22 @@ async function scrProd(){
       '<span><b>'+CAT(P(o.productId).type).icon+' '+esc(P(o.productId).name)+' × '+fmt(o.count)+'</b> <span class="sub">'+opTime(o)+'</span></span>',
       ing
     );
-  }).join('') : '<p class="sub">В этот день выпуска не было.</p>';
+}).join('') : '<p class="sub">За этот период выпуска не было.</p>';
   return '<h2>Выпуск готовой продукции</h2>'
     +'<div class="search"><input id="prodSearch" placeholder="Найти блюдо..." oninput="pSearch(this.value)" autocomplete="off"><span class="clr" onclick="pClear()">✕</span></div>'
     +(approved.length
       ? '<div class="card">'+listHtml+'</div><button class="btn" '+(anyCnt?'':'disabled')+' onclick="pSave()">Записать выпуск</button>'
       : '<div class="card"><p class="sub">Нет утверждённых рецептур. Проверьте раздел «Рецептуры».</p></div>')
-    +'<div class="hl">Выпущено за <input type="date" value="'+date+'" onchange="pDate=this.value;render()" style="width:auto;padding:4px 8px;font-size:12px;display:inline-block">:</div>'
+    +'<div class="hl">История выпуска</div>'
+    +'<div class="row"><div><label>С</label><input type="date" value="'+from+'" onchange="pFrom=this.value;render()"></div>'
+    +'<div><label>По</label><input type="date" value="'+to+'" onchange="pTo=this.value;render()"></div></div>'
+    +'<button class="btn sec sm" onclick="pSet(0)">Сегодня</button> '
+    +'<button class="btn sec sm" onclick="pSet(7)">Неделя</button> '
+    +'<button class="btn sec sm" onclick="pSet(30)">Месяц</button>'
+    +'<div style="height:8px"></div>'
     +histHtml;
 }
+window.pSet=function(days){ var d=new Date(); pTo=d.toISOString().slice(0,10); d.setDate(d.getDate()-days); pFrom=d.toISOString().slice(0,10); render(); };
 window.pStep=function(id,d){ pCnt[id]=Math.max(0,(pCnt[id]||0)+d); renderInPlace(); };
 window.pSearch=function(v){
   filterDom(v,'prod-item');
