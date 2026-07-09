@@ -314,7 +314,7 @@ async function scrProd(){
     );
   }).join('') : '<p class="sub">В этот день выпуска не было.</p>';
   return '<h2>Выпуск готовой продукции</h2>'
-    +'<div class="search"><input placeholder="Найти блюдо..." oninput="filterDom(this.value,\'prod-item\')" autocomplete="off"></div>'
+    +'<div class="search"><input id="prodSearch" placeholder="Найти блюдо..." oninput="pSearch(this.value)" autocomplete="off"><span class="clr" onclick="pClear()">✕</span></div>'
     +(approved.length
       ? '<div class="card">'+listHtml+'</div><button class="btn" '+(anyCnt?'':'disabled')+' onclick="pSave()">Записать выпуск</button>'
       : '<div class="card"><p class="sub">Нет утверждённых рецептур. Проверьте раздел «Рецептуры».</p></div>')
@@ -322,7 +322,18 @@ async function scrProd(){
     +histHtml;
 }
 window.pStep=function(id,d){ pCnt[id]=Math.max(0,(pCnt[id]||0)+d); renderInPlace(); };
-window.pSave=async function(){
+window.pSearch=function(v){
+  filterDom(v,'prod-item');
+  var c=document.querySelectorAll('.search .clr')[document.querySelectorAll('.search .clr').length-1];
+  if(c) c.style.display=v?'block':'none';
+};
+window.pClear=function(){
+  var i=$('#prodSearch');
+  if(i) i.value='';
+  pSearch('');
+  if(i) i.focus();
+};
+  window.pSave=async function(){
   if(busy) return; busy=true;
   try{
     var entries=Object.entries(pCnt).filter(function(e){ return e[1]>0; });
