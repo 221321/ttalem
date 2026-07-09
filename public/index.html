@@ -49,6 +49,7 @@ h2{font-size:14px;font-weight:600;margin:4px 0 10px}
 .search{position:relative;margin-bottom:10px}
 .search input{padding-left:36px}
 .search::before{content:'🔍';position:absolute;left:12px;top:50%;transform:translateY(-50%);font-size:14px}
+.search .clr{position:absolute;right:12px;top:50%;transform:translateY(-50%);font-size:15px;color:var(--mut);cursor:pointer;display:none;padding:4px}
 .srlist{background:var(--card);border:1px solid var(--line);border-radius:10px;max-height:260px;overflow-y:auto;margin-top:4px}
 .worklist{max-height:320px;overflow-y:auto;margin-bottom:8px}
 .sritem{padding:12px 14px;cursor:pointer;border-bottom:1px solid var(--line);font-size:14px}
@@ -240,7 +241,7 @@ async function scrWork(){
       var raw=P(s.sourceId);
       return '<div class="card tap work-item" data-name="'+esc((raw.name+' '+s.name).toLowerCase())+'" onclick="wPick(\''+s.id+'\')"><b>'+esc(raw.name)+'</b> → '+esc(s.name)+'</div>';
     }).join('') || '<p class="sub">Пока нет пар для обработки.</p>';
-    return '<div class="search"><input placeholder="Найти продукт для обработки..." oninput="filterDom(this.value,\'work-item\')" autocomplete="off"></div>'
+    return '<div class="search"><input id="workSearch" placeholder="Найти продукт для обработки..." oninput="wSearch(this.value)" autocomplete="off"><span class="clr" onclick="wClear()">✕</span></div>'
       +'<div class="worklist">'+listHtml+'</div>'+hist;
   }
   var s=P(wSel), raw=P(s.sourceId);
@@ -256,7 +257,18 @@ async function scrWork(){
     +'</div>'+hist;
 }
 window.wPick=function(id){ wSel=id; history.pushState({},''); render(); };
-window.wCalc=function(){
+window.wSearch=function(v){
+  filterDom(v,'work-item');
+  var c=document.querySelector('.search .clr');
+  if(c) c.style.display=v?'block':'none';
+};
+window.wClear=function(){
+  var i=$('#workSearch');
+  if(i) i.value='';
+  wSearch('');
+  if(i) i.focus();
+};
+  window.wCalc=function(){
   var b=+$('#wb').value, a=+$('#wa').value, el=$('#wloss'), btn=$('#wgo');
   if(b>0&&a>0&&a<=b){ el.innerHTML='Потери: <b>'+((1-a/b)*100).toFixed(1)+'%</b>'; btn.disabled=false; }
   else if(a>b){ el.textContent='Вес ПОСЛЕ больше ДО — проверьте'; btn.disabled=true; }
