@@ -380,6 +380,7 @@ window.recStatus=async function(id,action,msg){
 function scrNom(){
   var list=D.products.filter(function(p){ return p.type===nomTab; });
   var tabsHtml='<div class="tabbar">'+CATS.map(function(c){ return '<button class="'+(nomTab===c.id?'on':'')+'" onclick="nomTab=\''+c.id+'\';renderInPlace()">'+c.icon+' '+c.name+'</button>'; }).join('')+'</div>';
+  var searchHtml='<div class="search"><input placeholder="Найти..." oninput="filterDom(this.value,\'nom-item\')" autocomplete="off"></div>';
   var items=list.map(function(p){
     var st=p.recipeStatus||'draft';
     var stPill=hasRecipe(p)?' '+ST[st]:'';
@@ -394,7 +395,7 @@ function scrNom(){
     if(p.code1c) info+='<div class="sub">код 1С: '+esc(p.code1c)+'</div>';
     if(p.sourceId&&p.sourceId!==p.id) info+='<div class="sub">выработка из: '+esc(P(p.sourceId).name)+'</div>';
     var editBtn=(!hasRecipe(p)||canEdit(p))?'<button class="btn sec sm" onclick="event.stopPropagation();nomEdit(\''+p.id+'\')">✎</button>':'';
-    return card('n'+p.id,
+    return card('n'+p.id+' nom-item" data-name="'+esc(p.name.toLowerCase())+'',
       '<span style="flex:1"><b>'+esc(p.name)+'</b>'+stPill+lockIco+info+'</span>'+editBtn,
       recHtml+actBtn
     );
