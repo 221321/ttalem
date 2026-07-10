@@ -331,7 +331,11 @@ var listHtml=approved.map(function(d){
 }
 window.pSet=function(days){ var d=new Date(); pTo=d.toISOString().slice(0,10); d.setDate(d.getDate()-days); pFrom=d.toISOString().slice(0,10); render(); };
 window.pStep=function(id,d){ pCnt[id]=Math.max(0,(pCnt[id]||0)+d); renderInPlace(); };
-window.pSearch=function(v){
+window.pSetCnt=function(id,v){
+  pCnt[id]=Math.max(0,parseInt(v,10)||0);
+  renderInPlace();
+};
+  window.pSearch=function(v){
   filterDom(v,'prod-item');
   var c=document.querySelectorAll('.search .clr')[document.querySelectorAll('.search .clr').length-1];
   if(c) c.style.display=v?'block':'none';
