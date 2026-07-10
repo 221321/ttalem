@@ -299,12 +299,12 @@ async function scrProd(){
   var from=pFrom||today(), to=pTo||today();
   var dayOps=await api('/ops?from='+from+'&to='+to+'&type=production');
   var anyCnt=Object.values(pCnt).some(function(v){ return v>0; });
-  var listHtml=approved.map(function(d){
+var listHtml=approved.map(function(d){
     return '<div class="li prod-item" data-name="'+esc(d.name.toLowerCase())+'">'
       +'<span class="nm">'+CAT(d.type).icon+' '+esc(d.name)+'</span>'
       +'<span class="step">'
       +'<button onclick="pStep(\''+d.id+'\',-1)">−</button>'
-      +'<span>'+(pCnt[d.id]||0)+'</span>'
+      +'<input type="number" inputmode="numeric" min="0" value="'+(pCnt[d.id]||0)+'" style="width:52px;text-align:center;border:1px solid var(--line);border-radius:8px;padding:9px 2px;font-size:19px;font-weight:600" onfocus="this.select()" onchange="pSetCnt(\''+d.id+'\',this.value)">'
       +'<button onclick="pStep(\''+d.id+'\',1)">+</button>'
       +'</span></div>';
   }).join('');
