@@ -428,19 +428,21 @@ function drawNomEdit(id,p){
     +'<label>Наименование</label><input id="gn" value="'+esc(p.name)+'" '+(locked?'disabled':'')+' >'
     +'<div class="row"><div><label>Категория</label><select id="gt">'+catOpts+'</select></div>'
     +'<div><label>Единица</label><select id="gu">'+unitOpts+'</select></div></div>'
-    +'<label>Склад</label><select id="gsk">'+sklOpts+'</select>'
-    +'<label>Исходный продукт (только для Выработки ⚖️ — пары «сырьё → обработанное»)</label><select id="gs">'+srcOpts+'</select>'
-    +'<label>Код в 1С (заполняет менеджер)</label><input id="gc" value="'+esc(p.code1c||'')+'">'
++'<label>Склад</label><select id="gsk">'+sklOpts+'</select>'
+    +(isCook(ME.role)?'':'<label>Исходный продукт (только для Выработки ⚖️ — пары «сырьё → обработанное»)</label><select id="gs">'+srcOpts+'</select>')
+    +(isCook(ME.role)?'':'<label>Код в 1С (заполняет менеджер)</label><input id="gc" value="'+esc(p.code1c||'')+'">')
     +'</div>'
     +'<div class="card"><h2>Состав (рецептура)</h2>'
     +(locked?'<p class="sub">Заблокировано после утверждения</p>':'')
     +'<div id="recrows">'+rows+'</div>'
-    +(!locked?'<div class="search" style="margin-top:10px"><input placeholder="Найти и добавить ингредиент..." oninput="nomRecSearch(this.value,\''+(id||'')+'\')" autocomplete="off"></div><div id="recaddlist"></div>':'')
+    +(!locked?'<div class="search" style="margin-top:10px"><input id="recSearch" placeholder="Найти и добавить ингредиент..." oninput="nomRecSearch(this.value,\''+(id||'')+'\')" autocomplete="off"><span class="clr" onclick="nomRecClear(\''+(id||'')+'\')">✕</span></div><div id="recaddlist"></div>':'')
     +'</div>'
     +'<button class="btn" onclick="nomSave(\''+(id||'')+'\')">Сохранить</button>';
 }
 window.nomRecSearch=function(q,id){
   var el=$('#recaddlist'); if(!el) return;
+  var c=$('.search .clr');
+  if(c) c.style.display=q?'block':'none';
   if(!q){ el.innerHTML=''; return; }
   var res=filterList(D.products.filter(function(x){ return x.id!==id; }),q).slice(0,8);
   el.innerHTML='<div class="srlist">'+(res.map(function(p){ return '<div class="sritem" onclick="nomAddRow(\''+p.id+'\',\''+id+'\')">'+CAT(p.type).icon+' '+esc(p.name)+' <span class="sub">'+p.unit+'</span></div>'; }).join('')||'<div class="sritem sub">Ничего не найдено</div>')+'</div>';
