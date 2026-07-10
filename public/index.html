@@ -53,6 +53,7 @@ h2{font-size:14px;font-weight:600;margin:4px 0 10px}
 .srlist{background:var(--card);border:1px solid var(--line);border-radius:10px;max-height:260px;overflow-y:auto;margin-top:4px}
 .worklist{max-height:320px;overflow-y:auto;margin-bottom:8px}
 .nomlist{max-height:420px;overflow-y:auto;margin-bottom:8px}
+.stocklist{max-height:420px;overflow-y:auto;margin-bottom:8px}
 .sritem{padding:12px 14px;cursor:pointer;border-bottom:1px solid var(--line);font-size:14px}
 .sritem:last-child{border:none}
 .sritem:active{background:var(--bg)}
@@ -466,6 +467,17 @@ window.nClear=function(){
   nSearch('');
   if(i) i.focus();
 };
+ window.stSearch=function(v){
+  filterDom(v,'stock-item');
+  var c=document.querySelectorAll('.search .clr')[document.querySelectorAll('.search .clr').length-1];
+  if(c) c.style.display=v?'block':'none';
+};
+window.stClear=function(){
+  var i=$('#stockSearch');
+  if(i) i.value='';
+  stSearch('');
+  if(i) i.focus();
+};
   window.nomSave=async function(id){
   collectNomRec();
   var body={type:$('#gt').value,unit:$('#gu').value,skladId:$('#gsk')?$('#gsk').value:'sk2',recipe:editRecipe.filter(function(it){ return it.qty>0; })};
@@ -511,11 +523,12 @@ async function scrStock(){
     }).join('') || '<p class="sub">Остатков нет.</p>';
     return header+body+'<button class="btn sec" style="margin-top:8px" onclick="go(\'inv\')">Инвентаризация</button>';
   }
-  var filtered=stockData.filter(function(r){ return !stockTab||(r.bySkl&&r.bySkl[stockTab]); });
+var filtered=stockData.filter(function(r){ return !stockTab||(r.bySkl&&r.bySkl[stockTab]); });
   var tabsHtml='<div class="tabbar">'+skls.map(function(s){ return '<button class="'+(stockTab===s.id?'on':'')+'" onclick="stockTab=\''+s.id+'\';renderInPlace()">'+esc(s.name)+'</button>'; }).join('')+'<button class="'+(stockTab===''?'on':'')+'" onclick="stockTab=\'\';renderInPlace()">Все</button></div>';
-  return tabsHtml+'<div class="card">'+filtered.map(function(r){
+  var searchHtml='<div class="search"><input id="stockSearch" placeholder="Найти продукт..." oninput="stSearch(this.value)" autocomplete="off"><span class="clr" onclick="stClear()">✕</span></div>';
+  return tabsHtml+searchHtml+'<div class="card stocklist">'+filtered.map(function(r){
     var qty=stockTab?(r.bySkl&&r.bySkl[stockTab]?r.bySkl[stockTab].qty:0):r.total.qty;
-    return '<div class="li"><span class="nm">'+CAT(r.type).icon+' '+esc(r.name)+'</span><span class="vl '+(qty<0?'neg':'')+'">'+fmt(qty)+' '+r.unit+'</span></div>';
+    return '<div class="li stock-item" data-name="'+esc(r.name.toLowerCase())+'"><span class="nm">'+CAT(r.type).icon+' '+esc(r.name)+'</span><span class="vl '+(qty<0?'neg':'')+'">'+fmt(qty)+' '+r.unit+'</span></div>';
   }).join('')+'</div>';
 }
 
