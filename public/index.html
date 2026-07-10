@@ -432,11 +432,13 @@ function drawNomEdit(id,p){
     +(isCook(ME.role)?'':'<label>Исходный продукт (только для Выработки ⚖️ — пары «сырьё → обработанное»)</label><select id="gs">'+srcOpts+'</select>')
     +(isCook(ME.role)?'':'<label>Код в 1С (заполняет менеджер)</label><input id="gc" value="'+esc(p.code1c||'')+'">')
     +'</div>'
-    +'<div class="card"><h2>Состав (рецептура)</h2>'
-    +(locked?'<p class="sub">Заблокировано после утверждения</p>':'')
-    +'<div id="recrows">'+rows+'</div>'
-    +(!locked?'<div class="search" style="margin-top:10px"><input id="recSearch" placeholder="Найти и добавить ингредиент..." oninput="nomRecSearch(this.value,\''+(id||'')+'\')" autocomplete="off"><span class="clr" onclick="nomRecClear(\''+(id||'')+'\')">✕</span></div><div id="recaddlist"></div>':'')
-    +'</div>'
++(p.type==='process'
+      ? '<div class="card"><p class="sub">Этот продукт — результат обработки (⚖️ Выработка). Остаток появится автоматически, когда повар взвесит вес до/после на экране «Обработка». Рецептура здесь не нужна.</p></div>'
+      : '<div class="card"><h2>Состав (рецептура)</h2>'
+        +(locked?'<p class="sub">Заблокировано после утверждения</p>':'')
+        +'<div id="recrows">'+rows+'</div>'
+        +(!locked?'<div class="search" style="margin-top:10px"><input id="recSearch" placeholder="Найти и добавить ингредиент..." oninput="nomRecSearch(this.value,\''+(id||'')+'\')" autocomplete="off"><span class="clr" onclick="nomRecClear(\''+(id||'')+'\')">✕</span></div><div id="recaddlist"></div>':'')
+        +'</div>')
     +'<button class="btn" onclick="nomSave(\''+(id||'')+'\')">Сохранить</button>';
 }
 window.nomRecSearch=function(q,id){
