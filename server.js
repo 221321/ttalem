@@ -112,6 +112,7 @@ const isCook = role => role === 'cook' || role.startsWith('cook_');
 
   // уведомления
   if (!Array.isArray(db.alerts)) { db.alerts = []; changed = true; }
+  if (!Array.isArray(db.orders)) { db.orders = []; changed = true; }
 
   // Чиним sourceId: продукт не может быть выработкой из самого себя
   db.products.forEach(p => {
@@ -144,6 +145,7 @@ function save() {
 }
 function nid(prefix) { return prefix + (db.seq++).toString(36) + Date.now().toString(36).slice(-4); }
 function r2(x) { return Math.round(x * 100) / 100; }
+function today() { return new Date().toISOString().slice(0,10); }
 const sessions = {};
 
 // ---------- склады ----------
@@ -413,6 +415,24 @@ function reportStock(role) {
     }
   });
   return rows;
+}
+
+function reportPlan() {
+  const t = today();
+  const active = db.orders.filter(o => o.dateFrom <= t && o.dateTo >= t);
+  const byProduct = {};
+  active.forEach(o => {
+    if (!byProduct[o.productId]) byProduct[o.productId] = { productId: o.productId, planQty: 0, dateFrom: o.dateFrom, dateTo: o.dateTo };
+    byProduct[o.productId].planQty = r2(byProduct[o.productId].planQty + o.qty);
+    if (o.dateFrom < byProduct[o.productId].dateFrom) byProduct[o.productId].dateFrom = o.dateFrom;
+    if (o.dateTo > byProduct[o.productId].dateTo) byProduct[o.productId].dateTo = o.dateTo;
+  });
+  return Object.values(byProduct).map(g => {
+    const factOps = db.operations.filter(op => op.type === 'production' && op.productId === g.productId && op.ts.slice(0,10) >= g.dateFrom && op.ts.slice(0,10) <= g.dateTo);
+    const factQty = r2(factOps.reduce((a, o) => a + o.count, 0));
+    const p = product(g.productId);
+    return { productId: g.productId, name: p ? p.name : '?', unit: p ? p.unit : '', planQty: g.planQty, factQty, dateFrom: g.dateFrom, dateTo: g.dateTo };
+  });
 }
 
 // ---------- 1С экспорт ----------
@@ -710,6 +730,34 @@ if (p === '/api/ops' && req.method === 'GET') {
     ops = ops.slice(-500);
     if (!isAdmin) ops = ops.map(o => { const c = Object.assign({}, o); delete c.sum; delete c.price; delete c.writeoffs; return c; });
     return json(res, 200, ops);
+  }
+
+  // ---------- заказы (план на приготовление) ----------
+  if (p === '/api/orders' && req.method === 'GET') {
+    return json(res, 200, db.orders);
+  }
+  if (p === '/api/orders' && req.method === 'POST') {
+    if (isCook(role)) return json(res, 403, { error: 'Заказы создаёт менеджер или директор' });
+    const qty = +data.qty;
+    if (!(qty > 0)) return json(res, 400, { error: 'Введите количество' });
+    const dateFrom = data.dateFrom || today();
+    const dateTo = data.dateTo || dateFrom;
+    if (dateTo < dateFrom) return json(res, 400, { error: 'Срок раньше даты начала' });
+    const pr = product(data.productId);
+    if (!pr) return json(res, 400, { error: 'Продукт не найден' });
+    const ord = { id: nid('ord'), productId: data.productId, qty, dateFrom, dateTo, ts: new Date().toISOString(), userId: user.id };
+    db.orders.push(ord); save();
+    return json(res, 200, ord);
+  }
+  const mOrd = p.match(/^\/api\/orders\/([^/]+)$/);
+  if (mOrd && req.method === 'DELETE') {
+    if (isCook(role)) return json(res, 403, { error: 'Только менеджер или директор' });
+    db.orders = db.orders.filter(o => o.id !== mOrd[1]);
+    save();
+    return json(res, 200, { ok: true });
+  }
+  if (p === '/api/report/plan' && req.method === 'GET') {
+    return json(res, 200, reportPlan());
   }
 
   // ---------- отчёты ----------
