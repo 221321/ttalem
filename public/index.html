@@ -25,7 +25,7 @@ main{padding:12px 12px 20px;max-width:680px;margin:0 auto}
 input,select{width:100%;padding:12px;border:1px solid var(--line);border-radius:10px;font-size:16px;background:var(--card);color:var(--ink)}
 input.big{font-size:26px;font-weight:600;text-align:center}
 label{display:block;font-size:12px;color:var(--mut);margin:10px 0 4px}
-.row{display:flex;gap:8px}.row>*{flex:1;min-width:0}
+.row{display:flex;gap:8px}.row>*{flex:1}
 .pill{display:inline-block;padding:2px 8px;border-radius:99px;font-size:11px;font-weight:600}
 .ok{background:var(--accbg);color:var(--acc)}.bad{background:var(--redbg);color:var(--red)}.warn{background:var(--ambbg);color:var(--amb)}.info{background:var(--blubg);color:var(--blu)}
 nav{position:fixed;bottom:0;left:0;right:0;background:var(--card);border-top:1px solid var(--line);display:flex;z-index:5}
@@ -194,8 +194,8 @@ var NAVS={
   cook_baker:[['work','⚖️','Обработка'],['prod','🥪','Выпуск'],['nom','🏷️','Продукты'],['stock','📋','Остатки']],
   cook_pastry:[['work','⚖️','Обработка'],['prod','🥪','Выпуск'],['nom','🏷️','Продукты'],['stock','📋','Остатки']],
   cook_head: [['work','⚖️','Обработка'],['prod','🥪','Выпуск'],['nom','🏷️','Продукты'],['stock','📋','Остатки'],['move','🔄','Переместить']],
-  tech:      [['nom','🏷️','Продукты'],['wo','🧂','Специи'],['output','📊','Выработка'],['stock','📋','Остатки']],
-  admin:     [['cost','💰','Калькуляция'],['output','📊','Выработка'],['stock','📋','Остатки'],['sync','🔄','1С']]
+  tech:      [['orders','📝','Заказы'],['nom','🏷️','Продукты'],['wo','🧂','Специи'],['output','📊','Выработка'],['stock','📋','Остатки']],
+  admin:     [['orders','📝','Заказы'],['cost','💰','Калькуляция'],['output','📊','Выработка'],['stock','📋','Остатки'],['sync','🔄','1С']]
 };
 function shell(inner){
   var navs=NAVS[ME.role]||NAVS.admin;
@@ -299,10 +299,14 @@ async function scrProd(){
   var approved=D.products.filter(function(p){ return hasRecipe(p)&&p.recipeStatus==='approved'; });
   var from=pFrom||today(), to=pTo||today();
   var dayOps=await api('/ops?from='+from+'&to='+to+'&type=production');
+  var plan=await api('/report/plan');
+  var planMap={}; plan.forEach(function(g){ planMap[g.productId]=g; });
   var anyCnt=Object.values(pCnt).some(function(v){ return v>0; });
 var listHtml=approved.map(function(d){
-    return '<div class="li prod-item" data-name="'+esc(d.name.toLowerCase())+'">'
-      +'<span class="nm">'+CAT(d.type).icon+' '+esc(d.name)+'</span>'
+    var g=planMap[d.id];
+    var planLine=g?'<div class="sub">план: <b>'+fmt(g.planQty)+'</b> · сделано: <b>'+fmt(g.factQty)+'</b> · осталось: <b>'+fmt(Math.max(0,g.planQty-g.factQty))+'</b></div>':'';
+    return '<div class="li prod-item" data-name="'+esc(d.name.toLowerCase())+'" style="align-items:flex-start">'
+      +'<span class="nm">'+CAT(d.type).icon+' '+esc(d.name)+planLine+'</span>'
       +'<span class="step">'
       +'<button onclick="pStep(\''+d.id+'\',-1)">−</button>'
       +'<input type="number" inputmode="numeric" min="0" value="'+(pCnt[d.id]||0)+'" style="width:52px;text-align:center;border:1px solid var(--line);border-radius:8px;padding:9px 2px;font-size:19px;font-weight:600" onfocus="this.select()" onchange="pSetCnt(\''+d.id+'\',this.value)">'
@@ -596,6 +600,47 @@ window.woSave=async function(){
   }catch(e){ toast(e.message); }
 };
 
+// ====== ЗАКАЗЫ (ПЛАН ДЛЯ ПОВАРА) ======
+var ordQty='', ordFrom=null, ordTo=null;
+async function scrOrders(){
+  var dishes=D.products.filter(function(p){ return hasRecipe(p)&&p.recipeStatus==='approved'; });
+  var orders=await api('/orders');
+  var t=today();
+  var listHtml=orders.slice().sort(function(a,b){ return a.dateFrom<b.dateFrom?1:-1; }).map(function(o){
+    var active=o.dateFrom<=t&&o.dateTo>=t;
+    return card('ord'+o.id,
+      '<span style="flex:1"><b>'+esc(P(o.productId).name)+'</b> × '+fmt(o.qty)+' '+P(o.productId).unit+' '+(active?'<span class="pill ok">активен</span>':'<span class="pill warn">'+o.dateFrom+'</span>')+'</span>',
+      '<div class="sub">Период: '+o.dateFrom+' — '+o.dateTo+'</div>'
+        +'<button class="btn sec sm" style="margin-top:8px" onclick="event.stopPropagation();ordDel(\''+o.id+'\')">✕ Удалить</button>'
+    );
+  }).join('') || '<p class="sub">Заказов пока нет.</p>';
+  var dishOpts=dishes.map(function(d){ return '<option value="'+d.id+'">'+esc(d.name)+'</option>'; }).join('');
+  return '<h2>Заказ на приготовление</h2>'
+    +'<div class="card">'
+    +'<label>Блюдо</label><select id="ordP">'+dishOpts+'</select>'
+    +'<label>Количество, шт</label><input class="big" id="ordQ" type="number" min="1" step="1" inputmode="numeric" value="'+ordQty+'" onfocus="this.select()">'
+    +'<div class="row"><div><label>Начать</label><input type="date" id="ordFrom" value="'+(ordFrom||t)+'"></div>'
+    +'<div><label>Срок (до)</label><input type="date" id="ordTo" value="'+(ordTo||t)+'"></div></div>'
+    +'<div style="height:10px"></div><button class="btn" onclick="ordSave()">Создать заказ</button>'
+    +'</div>'
+    +'<div class="hl">Текущие заказы</div>'
+    +listHtml;
+}
+window.ordSave=async function(){
+  var pid=$('#ordP').value, qty=+$('#ordQ').value, from=$('#ordFrom').value, to=$('#ordTo').value;
+  if(!(qty>0)) return toast('Введите количество');
+  if(to<from) return toast('Срок раньше даты начала');
+  try{
+    await api('/orders','POST',{productId:pid,qty:qty,dateFrom:from,dateTo:to});
+    toast('✅ Заказ создан'); ordQty=''; render();
+  }catch(e){ toast(e.message); }
+};
+window.ordDel=async function(id){
+  if(!confirm('Удалить заказ?')) return;
+  try{ await api('/orders/'+id,'DELETE'); toast('Удалено'); render(); }
+  catch(e){ toast(e.message); }
+};
+
 // ====== ВЫРАБОТКА ЗА ПЕРИОД ======
 async function scrOutput(){
   var from=outFrom||today(), to=outTo||today();
@@ -732,7 +777,7 @@ window.moveSave=async function(){
 };
 
 // ====== РОУТЕР ======
-var SCREENS={work:scrWork,prod:scrProd,stock:scrStock,inv:scrInv,cost:scrCost,output:scrOutput,sync:scrSync,nom:scrNom,wo:scrWo,move:scrMove};
+var SCREENS={work:scrWork,prod:scrProd,stock:scrStock,inv:scrInv,cost:scrCost,output:scrOutput,sync:scrSync,nom:scrNom,wo:scrWo,move:scrMove,orders:scrOrders};
 async function render(){
   if(!ME) return renderLogin();
   var fn=SCREENS[screen]||scrStock;
