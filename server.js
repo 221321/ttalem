@@ -1,4 +1,4 @@
-// ТТ Алем v5 — многоскладовой учёт кухни
+// SKY MEAL v5 — многоскладовой учёт кухни бортпитания
 // Node.js без внешних зависимостей. Запуск: node server.js [порт]
 const http = require('http');
 const fs = require('fs');
@@ -467,7 +467,7 @@ function export1c(date) {
       ВидДокумента: 'ПеремещениеТМЗ', Дата: date, Время: t(),
       СкладОтправитель: from ? from.name : g.fromSkId,
       СкладПолучатель: to ? to.name : g.toSkId,
-      Комментарий: 'ТТ Алем: перемещение ' + (from ? from.name : '') + ' → ' + (to ? to.name : ''),
+      Комментарий: 'SKY MEAL: перемещение ' + (from ? from.name : '') + ' → ' + (to ? to.name : ''),
       Товары: Object.entries(g.items).map(([pid, v]) => { const p = product(pid); return { Наименование: p.name, Код: p.code1c || '', Количество: v.qty, Сумма: v.sum }; })
     });
   });
@@ -486,7 +486,7 @@ function export1c(date) {
     const sk = sklad(g.semiSkId);
     docs.push({
       ВидДокумента: 'КомплектацияНоменклатуры', Дата: date, Время: t(), Склад: sk ? sk.name : g.semiSkId,
-      Комментарий: 'ТТ Алем: выработка ' + raw.name + ' → ' + semi.name,
+      Комментарий: 'SKY MEAL: выработка ' + raw.name + ' → ' + semi.name,
       Номенклатура: { Наименование: semi.name, Код: semi.code1c || '', Количество: g.qtyAfter, Сумма: g.sum },
       Комплектующие: [{ Наименование: raw.name, Код: raw.code1c || '', Количество: g.qtyBefore, Сумма: g.sum }]
     });
@@ -510,7 +510,7 @@ function export1c(date) {
     docs.push({
       ВидДокумента: 'КомплектацияНоменклатуры', Дата: date, Время: t(),
       Склад: sk ? sk.name : g.skladId,
-      Комментарий: 'ТТ Алем: выпуск ' + d.name,
+      Комментарий: 'SKY MEAL: выпуск ' + d.name,
       Номенклатура: { Наименование: d.name, Код: d.code1c || '', Количество: g.count, Сумма: g.sum },
       Комплектующие: Object.entries(g.wo).map(([cid, w]) => { const p = product(cid); const ws = sklad(w.skladId); return { Наименование: p.name, Код: p.code1c || '', Количество: w.qty, Сумма: w.sum, Склад: ws ? ws.name : w.skladId }; })
     });
@@ -520,7 +520,7 @@ function export1c(date) {
   dayOps.filter(o => o.type === 'writeoff').forEach(o => {
     docs.push({
       ВидДокумента: 'СписаниеТМЗ', Дата: date, Время: t(),
-      Комментарий: 'ТТ Алем: ' + o.reason,
+      Комментарий: 'SKY MEAL: ' + o.reason,
       Товары: o.items.map(it => { const p = product(it.productId); const sk = sklad(it.skladId); return { Наименование: p.name, Код: p.code1c || '', Количество: it.qty, Сумма: it.sum, Склад: sk ? sk.name : it.skladId }; })
     });
   });
@@ -794,4 +794,4 @@ if (p === '/api/ops' && req.method === 'GET') {
   json(res, 404, { error: 'not found' });
 }
 
-server.listen(PORT, () => console.log('ТТ Алем v5 запущен: http://localhost:' + PORT));
+server.listen(PORT, () => console.log('SKY MEAL v5 запущен: http://localhost:' + PORT));
