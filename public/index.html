@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
 <title>SKY MEAL</title>
 <style>
-:root{--bg:#071021;--card:#0f1b31;--ink:#eef1f7;--mut:#8b96ad;--line:#20304d;--gold:#c9a35c;--goldink:#0a1428;--acc:#3ecf9a;--accbg:rgba(62,207,154,.14);--red:#ef6a5f;--redbg:rgba(239,106,95,.14);--amb:#e3b34c;--ambbg:rgba(227,179,76,.14);--blu:#6ea8ff;--blubg:rgba(110,168,255,.14)}
+:root{--bg:#F5F3F0;--card:#FFFFFF;--ink:#1C1917;--mut:#79716B;--line:#E7E3DE;--gold:#C9A35C;--goldink:#1C1917;--acc:#15803D;--accbg:#EAF5EE;--red:#DC2626;--redbg:#FCEBEA;--amb:#B45309;--ambbg:#FBF3E6;--blu:#1D4ED8;--blubg:#DBEAFE}
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--ink);font-size:16px;padding-bottom:76px}
 header{position:sticky;top:0;background:var(--bg);padding:12px 16px 8px;display:flex;justify-content:space-between;align-items:center;z-index:5;border-bottom:1px solid var(--line)}
@@ -18,7 +18,7 @@ main{padding:12px 12px 20px;max-width:680px;margin:0 auto}
 .btn{display:block;width:100%;padding:14px;border:none;border-radius:12px;background:var(--gold);color:var(--goldink);font-size:16px;font-weight:700;cursor:pointer}
 .btn:active{transform:scale(.98)}
 .btn.sec{background:transparent;color:var(--ink);border:1px solid var(--line)}
-.btn.grn{color:#04160f}
+.btn.grn{color:#fff}
 .btn.red{color:#fff}
 .btn.grn{background:var(--acc)}
 .btn.red{background:var(--red)}
@@ -43,7 +43,7 @@ h2{font-size:14px;font-weight:600;margin:4px 0 10px}
 .step{display:flex;align-items:center;gap:8px}
 .step button{width:40px;height:40px;border-radius:10px;border:1px solid var(--line);background:var(--card);font-size:20px;cursor:pointer}
 .step span{min-width:40px;text-align:center;font-size:19px;font-weight:600}
-.toast{position:fixed;top:12px;left:50%;transform:translateX(-50%);background:var(--card);color:var(--ink);border:1px solid var(--gold);padding:10px 18px;border-radius:99px;font-size:13px;z-index:99;opacity:0;transition:.25s;max-width:92%;text-align:center;box-shadow:0 4px 16px rgba(0,0,0,.4)}
+.toast{position:fixed;top:12px;left:50%;transform:translateX(-50%);background:var(--card);color:var(--ink);border:1px solid var(--gold);padding:10px 18px;border-radius:99px;font-size:13px;z-index:99;opacity:0;transition:.25s;max-width:92%;text-align:center;box-shadow:0 4px 20px rgba(28,25,23,.12)}
 .toast.show{opacity:1}
 .pinpad{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;max-width:280px;margin:16px auto}
 .pinpad button{padding:17px;font-size:21px;border:1px solid var(--line);border-radius:12px;background:var(--card);cursor:pointer}
@@ -64,7 +64,7 @@ h2{font-size:14px;font-weight:600;margin:4px 0 10px}
 .tabbar button.on{background:var(--gold);color:var(--goldink);border-color:var(--gold);font-weight:700}
 .chev{font-size:11px;color:var(--mut);transition:transform .2s;display:inline-block;margin-right:4px}
 .chev.open{transform:rotate(90deg)}
-.done{background:var(--accbg);border:1px solid rgba(62,207,154,.4);border-radius:14px;padding:14px;margin-bottom:10px;text-align:center}
+.done{background:var(--accbg);border:1px solid #BBF7D0;border-radius:14px;padding:14px;margin-bottom:10px;text-align:center}
 .hl{font-size:11px;color:var(--gold);margin:14px 0 5px;font-weight:600;text-transform:uppercase;letter-spacing:1.5px}
 h2{letter-spacing:.3px}
 header img.lg{height:30px;display:block}
