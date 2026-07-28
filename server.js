@@ -147,6 +147,7 @@ function nid(prefix) { return prefix + (db.seq++).toString(36) + Date.now().toSt
 function r2(x) { return Math.round(x * 100) / 100; }
 function today() { return new Date().toISOString().slice(0,10); }
 const sessions = {};
+const loginAttempts = {}; // ip -> { count, until }
 
 // ---------- склады ----------
 function sklad(id) { return db.sklads.find(s => s.id === id); }
@@ -399,6 +400,7 @@ function reportOutput(from, to, hideMoney) {
 // остатки в разрезе продукт × склад
 function reportStock(role) {
   const skIds = cookSklads(role).map(s => s.id);
+  const showMoney = role === 'admin' || role === 'tech';
   const rows = [];
   db.products.forEach(p => {
     if (!skIds.includes(p.skladId) && role !== 'admin' && role !== 'tech') return;
@@ -408,7 +410,7 @@ function reportStock(role) {
       const s = db.stock[p.id] && db.stock[p.id][sk.id];
       const qty = s ? s.qty : 0;
       const val = s ? s.value : 0;
-      if (qty !== 0) { bySkl[sk.id] = { qty, value: val }; total = r2(total + qty); }
+      if (qty !== 0) { bySkl[sk.id] = showMoney ? { qty, value: val } : { qty }; total = r2(total + qty); }
     });
     if (total !== 0 || Object.keys(bySkl).length) {
       rows.push({ productId: p.id, name: p.name, type: p.type, unit: p.unit, skladId: p.skladId, total, bySkl });
@@ -569,10 +571,19 @@ function route(req, res, u, data) {
     return res.end(fs.readFileSync(f));
   }
   if (p === '/api/login' && req.method === 'POST') {
+    const ip = (req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown').split(',')[0].trim();
+    const now = Date.now();
+    const la = loginAttempts[ip];
+    if (la && la.until > now) return json(res, 429, { error: 'Слишком много попыток. Подождите ' + Math.ceil((la.until - now) / 1000) + ' с.' });
     const cat = String(data.category || '');
     const catOk = u => cat === 'cook' ? isCook(u.role) : u.role === cat;
     const user = db.users.find(x => catOk(x) && x.pin === String(data.pin));
-    if (!user) return json(res, 401, { error: 'Неверный PIN' });
+    if (!user) {
+      const count = (la ? la.count : 0) + 1;
+      loginAttempts[ip] = { count, until: count >= 5 ? now + 60000 : 0 };
+      return json(res, 401, { error: 'Неверный PIN' });
+    }
+    delete loginAttempts[ip];
     const token = crypto.randomBytes(16).toString('hex');
     sessions[token] = user.id;
     return json(res, 200, { token, user: { id: user.id, name: user.name, role: user.role } });
@@ -649,23 +660,14 @@ function route(req, res, u, data) {
       if (st === 'submitted' && isCook(role)) return json(res, 403, { error: 'Рецептура передана менеджеру' });
     }
     const cleanRecipe = data.recipe !== undefined ? data.recipe.filter(it => it.qty > 0 && it.productId !== pr.id) : undefined;
-    if (isCook(role) && false) { // временно отключено — повар имеет полный доступ
-      if (!pr.recipe.length && !(cleanRecipe && cleanRecipe.length)) return json(res, 403, { error: 'Нет прав' });
-      diffRecipe(pr, user, data.name, cleanRecipe);
-      if (data.name !== undefined) pr.name = String(data.name).trim();
-      if (data.unit !== undefined && VALID_UNITS.includes(data.unit)) pr.unit = data.unit;
-      if (data.type !== undefined && VALID_TYPES.includes(data.type) && data.type !== 'raw') pr.type = data.type;
-      if (cleanRecipe !== undefined) pr.recipe = cleanRecipe;
-    } else {
-      if (touchesRecipe) diffRecipe(pr, user, data.name, cleanRecipe);
-      if (data.name !== undefined) pr.name = String(data.name).trim();
-      if (data.type !== undefined && VALID_TYPES.includes(data.type)) pr.type = data.type;
-      if (data.unit !== undefined && VALID_UNITS.includes(data.unit)) pr.unit = data.unit;
-      if (data.sourceId !== undefined) pr.sourceId = (data.sourceId && data.sourceId !== pr.id) ? data.sourceId : null;
-      if (data.code1c !== undefined) pr.code1c = data.code1c;
-      if (data.skladId !== undefined) pr.skladId = data.skladId;
-      if (cleanRecipe !== undefined) pr.recipe = cleanRecipe;
-    }
+    if (touchesRecipe) diffRecipe(pr, user, data.name, cleanRecipe);
+    if (data.name !== undefined) pr.name = String(data.name).trim();
+    if (data.type !== undefined && VALID_TYPES.includes(data.type)) pr.type = data.type;
+    if (data.unit !== undefined && VALID_UNITS.includes(data.unit)) pr.unit = data.unit;
+    if (data.sourceId !== undefined) pr.sourceId = (data.sourceId && data.sourceId !== pr.id) ? data.sourceId : null;
+    if (data.code1c !== undefined) pr.code1c = data.code1c;
+    if (data.skladId !== undefined) pr.skladId = data.skladId;
+    if (cleanRecipe !== undefined) pr.recipe = cleanRecipe;
     if (pr.recipe.length && !pr.recipeStatus) pr.recipeStatus = 'draft';
     save();
     return json(res, 200, productOut(pr, role));
