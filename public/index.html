@@ -210,10 +210,23 @@ function shell(inner){
     return '<button class="'+(screen===n[0]?'on':'')+'" onclick="go(\''+n[0]+'\')">'
       +'<span class="ic">'+n[1]+'</span>'+n[2]+'</button>';
   }).join('');
+  var alertsHtml='';
+  if((ME.role==='admin'||ME.role==='tech')&&D.alerts&&D.alerts.length){
+    alertsHtml='<div class="card" style="border-color:var(--amb);background:var(--ambbg)">'
+      +'<div style="display:flex;justify-content:space-between;align-items:center;gap:8px">'
+      +'<b>⚠️ Уведомления ('+D.alerts.length+')</b>'
+      +'<button class="btn sec sm" onclick="alertsRead()">Прочитано</button></div>'
+      +D.alerts.slice(0,5).map(function(a){ return '<div class="sub" style="margin-top:6px">'+esc(a.msg)+'</div>'; }).join('')
+      +'</div>';
+  }
   app.innerHTML='<header><span class="logochip"><img src="/logo.png" alt="SKY MEAL" class="lg"></span><span class="who">'+esc(ME.name)+' · '+(ROLE[ME.role]||ME.role)+' · <a href="#" onclick="logout();return false" style="color:var(--mut)">выйти</a></span></header>'
-    +'<main id="m">'+inner+'</main>'
+    +'<main id="m">'+alertsHtml+inner+'</main>'
     +'<nav>'+navHtml+'</nav>';
 }
+window.alertsRead=async function(){
+  try{ await api('/alerts/read','POST'); await reload(); render(); }
+  catch(e){ toast(e.message); }
+};
 window.go=async function(s){ screen=s;wSel=null;wDone=null;exp={};await reload();render(); };
 window.logout=logout;
 
@@ -552,9 +565,64 @@ var filtered=stockData.filter(function(r){ return !stockTab||(r.bySkl&&r.bySkl[s
   }).join('')+'</div>';
 }
 
-function scrInv(){
-  return '<h2>Инвентаризация</h2><p class="sub">Загрузка...</p>';
+var invSk=null, invVals={};
+async function scrInv(){
+  var skls=(D.sklads||[]).filter(function(s){ return !s.is1cMain; });
+  if(!invSk||!skls.find(function(s){ return s.id===invSk; })) invSk=skls[0]?skls[0].id:'';
+  var isAdmin=ME.role==='admin';
+  var tabsHtml='<div class="tabbar">'+skls.map(function(s){ return '<button class="'+(invSk===s.id?'on':'')+'" onclick="invSk=\''+s.id+'\';invVals={};renderInPlace()">'+esc(s.name)+'</button>'; }).join('')+'</div>';
+  var rows=D.products.filter(function(p){
+    var st=D.stock[p.id];
+    var hasHere=st&&st.bySklad&&st.bySklad[invSk]&&st.bySklad[invSk].qty;
+    return p.skladId===invSk||hasHere;
+  });
+  var listHtml=rows.map(function(p){
+    var st=D.stock[p.id];
+    var cur=st&&st.bySklad&&st.bySklad[invSk]?st.bySklad[invSk].qty:0;
+    var val=invVals.hasOwnProperty(p.id)?invVals[p.id]:cur;
+    return '<div class="li"><span class="nm">'+CAT(p.type).icon+' '+esc(p.name)+'<div class="sub">учёт: '+fmt(cur)+' '+p.unit+'</div></span>'
+      +(isAdmin
+        ?'<input type="number" step="0.01" inputmode="decimal" value="'+val+'" style="width:100px;text-align:center" onfocus="this.select()" onchange="invChange(\''+p.id+'\',this.value)">'
+        :'<span class="vl">'+fmt(cur)+' '+p.unit+'</span>')
+      +'</div>';
+  }).join('') || '<p class="sub">Нет позиций на этом складе.</p>';
+  var saveBtn=isAdmin?'<button class="btn" style="margin-top:10px" onclick="invSave()">Сохранить инвентаризацию</button>':'';
+  var hist='';
+  if(isAdmin||ME.role==='tech'){
+    var h=await api('/inv/history');
+    hist='<div class="hl" style="margin-top:16px">История инвентаризаций</div>'
+      +(h.length?h.map(function(iv){
+        var diffRows=iv.rows.filter(function(r){ return Math.abs(r.diff)>0.001; });
+        return card('iv'+iv.id,
+          '<span style="flex:1">'+new Date(iv.ts).toLocaleString('ru-RU',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})+' · '+esc(iv.user)+'</span><b class="'+(iv.total<0?'neg':'')+'">'+money(iv.total)+'</b>',
+          diffRows.length?diffRows.map(function(r){
+            return '<div class="li"><span class="nm">'+esc(P(r.productId).name)+'</span><span class="vl '+(r.diff<0?'neg':'')+'">'+(r.diff>0?'+':'')+fmt(r.diff)+' '+P(r.productId).unit+' ('+money(r.diffSum)+')</span></div>';
+          }).join(''):'<p class="sub">Расхождений нет.</p>'
+        );
+      }).join(''):'<p class="sub">Инвентаризаций ещё не было.</p>');
+  }
+  return '<h2>Инвентаризация</h2>'
+    +(isAdmin
+      ?'<p class="sub" style="margin-bottom:10px">Выберите склад, поправьте фактические остатки и сохраните — разница спишется или оприходуется автоматически.</p>'
+      :'<p class="sub" style="margin-bottom:10px">Просмотр остатков. Сохранять инвентаризацию может только директор.</p>')
+    +tabsHtml
+    +'<div class="card">'+listHtml+'</div>'
+    +saveBtn
+    +hist;
 }
+window.invChange=function(pid,v){ invVals[pid]=v===''?'':(+v); };
+window.invSave=async function(){
+  if(busy) return;
+  var items=Object.keys(invVals).filter(function(pid){ return invVals[pid]!==''&&invVals[pid]!=null; }).map(function(pid){ return {productId:pid,skladId:invSk,factQty:+invVals[pid]}; });
+  if(!items.length) return toast('Измените хотя бы одно значение');
+  if(!confirm('Сохранить инвентаризацию по складу «'+esc(SK(invSk).name)+'»? Позиций: '+items.length+'.')) return;
+  try{
+    busy=true;
+    await api('/ops','POST',{type:'inventory',items:items});
+    toast('✅ Инвентаризация сохранена'); invVals={}; await reload(); render();
+  }catch(e){ toast(e.message); }
+  busy=false;
+};
 
 // ====== СПЕЦИИ ======
 function scrWo(){
@@ -719,6 +787,10 @@ async function scrSync(){
   var d=syncDate||today();
   var r=await api('/1c/export?date='+d);
   var S=D.settings||{};
+  var settingsHtml='<div class="card"><label>Порог расхождения для уведомлений, %</label>'
+    +'<input class="big" id="diffTh" type="number" step="1" min="1" value="'+(S.diffThresholdPct||5)+'">'
+    +'<p class="sub" style="margin-top:6px">При инвентаризации, если факт отличается от учёта больше чем на этот процент — придёт уведомление директору.</p>'
+    +'<div style="height:8px"></div><button class="btn sec" onclick="saveSettings()">Сохранить порог</button></div>';
   var raws=D.products.filter(function(p){ return p.type==='raw'; });
   var docsHtml=r.Документы.map(function(doc){
     return card('doc'+doc.Время+doc.ВидДокумента,
@@ -739,8 +811,15 @@ async function scrSync(){
     +docsHtml
     +'<div style="height:8px"></div>'
     +'<button class="btn sec" onclick="syncCopy()">Скопировать JSON для 1С</button></div>'
-    +card('rcpt','<span style="flex:1"><b>📦 Ручной ввод поступления</b></span><span class="sub">до подключения 1С</span>',rcptHtml);
+    +card('rcpt','<span style="flex:1"><b>📦 Ручной ввод поступления</b></span><span class="sub">до подключения 1С</span>',rcptHtml)
+    +settingsHtml;
 }
+window.saveSettings=async function(){
+  var v=+$('#diffTh').value;
+  if(!(v>0)) return toast('Введите число больше нуля');
+  try{ await api('/settings','PUT',{diffThresholdPct:v}); toast('✅ Сохранено'); await reload(); render(); }
+  catch(e){ toast(e.message); }
+};
 window.syncCopy=async function(){
   var r=await api('/1c/export?date='+(syncDate||today()));
   await navigator.clipboard.writeText(JSON.stringify(r,null,1));
