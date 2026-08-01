@@ -437,7 +437,7 @@ function reportPlan() {
   });
 }
 
-// ---------- 1С экспорт ----------
+// ---------- 1С экспорт: документы за дату ----------
 function export1c(date) {
   const dayOps = db.operations.filter(op => op.ts.slice(0, 10) === date);
   const docs = [];
@@ -528,6 +528,25 @@ function export1c(date) {
   });
 
   return docs;
+}
+
+// ---------- 1С экспорт: спецификации номенклатуры (рецептуры) ----------
+function exportSpecs1c() {
+  return db.products
+    .filter(p => p.recipeStatus === 'approved' && p.recipe && p.recipe.length)
+    .map(p => ({
+      Владелец: { Код: p.code1c || '', Наименование: p.name },
+      ВыходКоличество: 1,
+      Компоненты: p.recipe.map(it => {
+        const c = product(it.productId);
+        return {
+          Код: c ? (c.code1c || '') : '',
+          Наименование: c ? c.name : '?',
+          Количество: it.qty,
+          Единица: c ? c.unit : ''
+        };
+      })
+    }));
 }
 
 // ---------- http ----------
@@ -792,6 +811,10 @@ if (p === '/api/ops' && req.method === 'GET') {
     if (!isAdmin) return json(res, 403, { error: 'Только директор' });
     const date = u.searchParams.get('date') || new Date().toISOString().slice(0, 10);
     return json(res, 200, { Дата: date, Документы: export1c(date) });
+  }
+  if (p === '/api/1c/specs') {
+    if (!isAdmin) return json(res, 403, { error: 'Только директор' });
+    return json(res, 200, { Спецификации: exportSpecs1c() });
   }
   json(res, 404, { error: 'not found' });
 }
