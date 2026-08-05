@@ -103,7 +103,7 @@ header img.lg{height:26px;display:block}
 var TOKEN = sessionStorage.getItem('tok') || '';
 var ME = JSON.parse(sessionStorage.getItem('me') || 'null');
 var D = { products: [], stock: {}, sklads: [], alerts: [] };
-var screen = 'work';
+var screen = sessionStorage.getItem('screen') || 'work';
 var pin = '', pickedUser = null;
 var exp = {}, busy = false;
 var wSel = null, wDone = null, wQ = '';
@@ -227,7 +227,7 @@ window.alertsRead=async function(){
   try{ await api('/alerts/read','POST'); await reload(); render(); }
   catch(e){ toast(e.message); }
 };
-window.go=async function(s){ screen=s;wSel=null;wDone=null;exp={};await reload();render(); };
+window.go=async function(s){ screen=s;sessionStorage.setItem('screen',s);wSel=null;wDone=null;exp={};await reload();render(); };
 window.logout=logout;
 
 function renderInPlace(){
