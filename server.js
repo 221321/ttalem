@@ -863,7 +863,7 @@ if (p === '/api/ops' && req.method === 'GET') {
       if (!code) return;
       seenCodes.add(code);
       const pr = byCode[code];
-      if (!pr) { notInSkyMeal.push({ code, qty1c: item.qty }); return; }
+      if (!pr) { notInSkyMeal.push({ code, qty1c: item.qty, name: item.name || '' }); return; }
       const ourQty = totalStock(pr.id).qty;
       const diff = r2((+item.qty || 0) - ourQty);
       if (Math.abs(diff) > 0.01) {
