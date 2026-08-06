@@ -114,6 +114,7 @@ var syncDate = null, rcptOpen = false;
 var woItems = [], woQ = '';
 var editRecipe = [];
 var nomPasteOpen = false, nomPasteText = '';
+var stPasteOpen = false, stPasteText = '';
 
 var $ = function(s){ return document.querySelector(s); };
 var app = $('#app');
@@ -788,6 +789,7 @@ async function scrSync(){
   var d=syncDate||today();
   var r=await api('/1c/export?date='+d);
   var nd=await api('/1c/nomenclature-diff').catch(function(){ return null; });
+  var sd=await api('/1c/stock-diff').catch(function(){ return null; });
   var S=D.settings||{};
   var settingsHtml='<div class="card"><label>Порог расхождения для уведомлений, %</label>'
     +'<input class="big" id="diffTh" type="number" step="1" min="1" value="'+(S.diffThresholdPct||5)+'">'
@@ -843,8 +845,46 @@ async function scrSync(){
   }
   nomHtml+='</div>';
 
+  // ---- блок сверки остатков ----
+  var mainSkName=((D.sklads||[]).find(function(s){ return s.is1cMain; })||{}).name||'основной склад';
+  var stHtml='<div class="card"><b>📦 Сверка остатков с 1С</b><p class="sub" style="margin-top:4px">Факт из 1С применяется на склад «'+esc(mainSkName)+'».</p>';
+  if(sd){
+    stHtml+='<p class="sub" style="margin-top:6px">Последняя сверка: '+new Date(sd.ts).toLocaleString('ru-RU')+' · получено позиций: '+sd.totalIncoming+' · совпадает: '+sd.matchedSame+'</p>';
+    if(sd.mismatches&&sd.mismatches.length){
+      stHtml+='<div class="hl">Расхождения ('+sd.mismatches.length+')</div>'
+        +'<div class="stocklist">'+sd.mismatches.map(function(m){
+          return '<div class="li"><span class="nm">'+esc(m.name)+'<div class="sub">1С: '+fmt(m.qty1c)+' · SKY MEAL: '+fmt(m.qtySkyMeal)+' · разница '+fmt(m.diff)+'</div></span></div>';
+        }).join('')+'</div>';
+    }
+    if(sd.notInSkyMeal&&sd.notInSkyMeal.length){
+      stHtml+='<div class="hl">Код из 1С не найден в SKY MEAL ('+sd.notInSkyMeal.length+')</div>'
+        +'<div class="stocklist">'+sd.notInSkyMeal.map(function(it){ return '<div class="li"><span class="nm">код '+esc(it.code)+'<div class="sub">1С: '+fmt(it.qty1c)+'</div></span></div>'; }).join('')+'</div>'
+        +'<p class="sub" style="margin-top:6px">Сначала сделайте сверку номенклатуры выше.</p>';
+    }
+    if(sd.notIn1c&&sd.notIn1c.length){
+      stHtml+='<div class="hl">Есть остаток у нас, не пришло из 1С ('+sd.notIn1c.length+')</div>'
+        +'<div class="stocklist">'+sd.notIn1c.map(function(it){ return '<div class="li"><span class="nm">'+esc(it.name)+'<div class="sub">код '+esc(it.code)+' · у нас: '+fmt(it.qtySkyMeal)+'</div></span></div>'; }).join('')+'</div>';
+    }
+    if((!sd.mismatches||!sd.mismatches.length)&&(!sd.notInSkyMeal||!sd.notInSkyMeal.length)&&(!sd.notIn1c||!sd.notIn1c.length)){
+      stHtml+='<p class="sub" style="margin-top:8px">Расхождений нет.</p>';
+    }
+    if(sd.mismatches&&sd.mismatches.length){
+      stHtml+='<div style="height:8px"></div><button class="btn grn" onclick="stApply()">Применить сверку (обновить остатки)</button>';
+    }
+  } else {
+    stHtml+='<p class="sub" style="margin-top:6px">Сверки ещё не было — либо 1С ещё не присылала остатки, либо проверьте вручную ниже.</p>';
+  }
+  stHtml+='<div style="height:8px"></div><button class="btn sec sm" onclick="stPasteOpen=!stPasteOpen;renderInPlace()">'+(stPasteOpen?'Скрыть ручную проверку':'Проверить вручную (вставить JSON)')+'</button>';
+  if(stPasteOpen){
+    stHtml+='<div style="height:8px"></div><label>JSON вида {"items":[{"code":"00001","qty":12.5}]}</label>'
+      +'<textarea id="stPasteArea" rows="6" style="width:100%;padding:10px;border:1px solid var(--line);border-radius:10px;font-family:monospace;font-size:12px">'+esc(stPasteText)+'</textarea>'
+      +'<div style="height:8px"></div><button class="btn sec" onclick="stCheckPaste()">Проверить</button>';
+  }
+  stHtml+='</div>';
+
   return '<h2>Обмен с 1С</h2>'
     +nomHtml
+    +stHtml
     +'<div class="card"><label>Дата выгрузки</label>'
     +'<input type="date" value="'+d+'" onchange="syncDate=this.value;render()">'
     +'<div style="height:8px"></div>'
@@ -894,6 +934,29 @@ window.nomApply=async function(){
       .concat((nd.newInOneC||[]).map(function(it){ return {code:it.code,name:it.name,unit:it.unit}; }));
     var r=await api('/1c/nomenclature-apply','POST',{items:items,createMissing:createMissing});
     toast('✅ Обновлено: '+r.updated+', создано: '+r.created); await reload(); render();
+  }catch(e){ toast(e.message); }
+};
+window.stCheckPaste=async function(){
+  stPasteText=$('#stPasteArea').value;
+  var parsed;
+  try{ parsed=JSON.parse(stPasteText); }
+  catch(e){ return toast('Это не валидный JSON'); }
+  var items=Array.isArray(parsed)?parsed:parsed.items;
+  if(!Array.isArray(items)) return toast('Ожидается {"items":[...]} или массив');
+  try{
+    await api('/1c/stock-diff','POST',{items:items});
+    toast('✅ Сверка выполнена'); stPasteOpen=false; renderInPlace();
+  }catch(e){ toast(e.message); }
+};
+window.stApply=async function(){
+  if(!confirm('Обновить остатки в SKY MEAL по расхождениям из 1С? Это изменит фактические остатки и их стоимость.')) return;
+  try{
+    var sd=await api('/1c/stock-diff');
+    if(!sd) return toast('Нет данных сверки');
+    var items=(sd.mismatches||[]).map(function(m){ return {code:m.code,qty:m.qty1c}; });
+    if(!items.length) return toast('Нет расхождений для применения');
+    var r=await api('/1c/stock-apply','POST',{items:items});
+    toast('✅ Применено: '+r.applied); await reload(); render();
   }catch(e){ toast(e.message); }
 };
 
