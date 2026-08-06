@@ -858,7 +858,7 @@ async function scrSync(){
     }
     if(sd.notInSkyMeal&&sd.notInSkyMeal.length){
       stHtml+='<div class="hl">Код из 1С не найден в SKY MEAL ('+sd.notInSkyMeal.length+')</div>'
-        +'<div class="stocklist">'+sd.notInSkyMeal.map(function(it){ return '<div class="li"><span class="nm">код '+esc(it.code)+'<div class="sub">1С: '+fmt(it.qty1c)+'</div></span></div>'; }).join('')+'</div>'
+        +'<div class="stocklist">'+sd.notInSkyMeal.map(function(it){ return '<div class="li"><span class="nm">'+esc(it.name||('код '+it.code))+'<div class="sub">код '+esc(it.code)+' · 1С: '+fmt(it.qty1c)+'</div></span></div>'; }).join('')+'</div>'
         +'<p class="sub" style="margin-top:6px">Сначала сделайте сверку номенклатуры выше.</p>';
     }
     if(sd.notIn1c&&sd.notIn1c.length){
