@@ -850,6 +850,47 @@ if (p === '/api/ops' && req.method === 'GET') {
     return json(res, 200, db.lastNomenclatureDiff || null);
   }
 
+  // ---------- сверка остатков: 1С присылает {items:[{code, qty}]}, сравниваем с нашим stock по code1c ----------
+  if (p === '/api/1c/stock-diff' && req.method === 'POST') {
+    if (!isAdmin) return json(res, 403, { error: 'Только директор' });
+    const incoming = data.items || [];
+    const byCode = {};
+    db.products.forEach(p => { if (p.code1c) byCode[p.code1c] = p; });
+    const seenCodes = new Set();
+    const mismatches = [];
+    let matchedSame = 0;
+    const notInSkyMeal = [];
+    incoming.forEach(item => {
+      const code = String(item.code || '').trim();
+      if (!code) return;
+      seenCodes.add(code);
+      const pr = byCode[code];
+      if (!pr) { notInSkyMeal.push({ code, qty1c: item.qty }); return; }
+      const ourQty = totalStock(pr.id).qty;
+      const diff = r2((+item.qty || 0) - ourQty);
+      if (Math.abs(diff) > 0.01) {
+        mismatches.push({ productId: pr.id, name: pr.name, code, qty1c: item.qty, qtySkyMeal: ourQty, diff });
+      } else {
+        matchedSame++;
+      }
+    });
+    const notIn1c = [];
+    db.products.forEach(pr => {
+      if (pr.code1c && !seenCodes.has(pr.code1c)) {
+        const ourQty = totalStock(pr.id).qty;
+        if (Math.abs(ourQty) > 0.01) notIn1c.push({ productId: pr.id, name: pr.name, code: pr.code1c, qtySkyMeal: ourQty });
+      }
+    });
+    const result = { matchedSame, mismatches, notInSkyMeal, notIn1c };
+    db.lastStockDiff = Object.assign({ ts: new Date().toISOString(), totalIncoming: incoming.length }, result);
+    save();
+    return json(res, 200, result);
+  }
+  if (p === '/api/1c/stock-diff' && req.method === 'GET') {
+    if (!isAdmin) return json(res, 403, { error: 'Только директор' });
+    return json(res, 200, db.lastStockDiff || null);
+  }
+
   if (p === '/api/1c/nomenclature-apply' && req.method === 'POST') {
     if (!isAdmin) return json(res, 403, { error: 'Только директор' });
     const incoming = data.items || [];
