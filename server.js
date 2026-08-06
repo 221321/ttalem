@@ -839,7 +839,15 @@ if (p === '/api/ops' && req.method === 'GET') {
         missingInOneC.push({ productId: p.id, name: p.name, code1c: p.code1c });
       }
     });
-    return json(res, 200, { matched: matched.length, matchedDetails: matched.filter(m => m.nameChanged), newInOneC, missingInOneC });
+    const result = { matched: matched.length, matchedDetails: matched.filter(m => m.nameChanged), newInOneC, missingInOneC };
+    db.lastNomenclatureDiff = Object.assign({ ts: new Date().toISOString(), totalIncoming: incoming.length }, result);
+    save();
+    return json(res, 200, result);
+  }
+  // директор смотрит последнюю сверку в интерфейсе, даже если её запускало 1С напрямую
+  if (p === '/api/1c/nomenclature-diff' && req.method === 'GET') {
+    if (!isAdmin) return json(res, 403, { error: 'Только директор' });
+    return json(res, 200, db.lastNomenclatureDiff || null);
   }
 
   if (p === '/api/1c/nomenclature-apply' && req.method === 'POST') {
@@ -858,6 +866,7 @@ if (p === '/api/ops' && req.method === 'GET') {
         created++;
       }
     });
+    db.lastNomenclatureDiff = null;
     save();
     return json(res, 200, { updated, created });
   }
