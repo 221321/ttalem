@@ -362,9 +362,55 @@ function opWriteoff(o) {
   });
   return { type: 'writeoff', reason: o.reason || 'списание', items: rows, sum: r2(rows.reduce((a, r) => a + r.sum, 0)) };
 }
-const OPS = { receipt: opReceipt, processing: opProcessing, production: opProduction, inventory: opInventory, move: opMove, writeoff: opWriteoff };
+function opSale(o) {
+  const p = product(o.productId);
+  if (!p) throw new Error('Продукт не найден');
+  if (!(o.qty > 0)) throw new Error('Количество должно быть больше нуля');
+  const skId = o.skladId || p.skladId || 'sk7';
+  const s = stockOf(o.productId, skId);
+  if (s.qty + 0.001 < o.qty) throw new Error('Недостаточно «' + p.name + '» на складе: есть ' + r2(s.qty) + ', требуется ' + o.qty + '. Сначала сделайте выпуск.');
+  const uc = unitCost(o.productId);
+  const costSum = r2(uc * o.qty);
+  const price = o.price != null && o.price !== '' ? +o.price : (p.salePrice || 0);
+  const sum = r2(price * o.qty);
+  s.qty = r2(s.qty - o.qty);
+  s.value = r2(Math.max(0, s.value - costSum));
+  const paid = !!o.paid;
+  const paidAmount = paid ? sum : r2(Math.min(sum, +o.paidAmount || 0));
+  return {
+    type: 'sale', productId: o.productId, skladId: skId, qty: o.qty, price, sum, costSum,
+    profit: r2(sum - costSum), client: (o.client || '').trim(), paid: paidAmount >= sum - 0.001, paidAmount
+  };
+}
+const OPS = { receipt: opReceipt, processing: opProcessing, production: opProduction, inventory: opInventory, move: opMove, writeoff: opWriteoff, sale: opSale };
 
 // ---------- отчёты ----------
+// ---------- отчёт по реализации: выручка, себестоимость, прибыль, долги ----------
+function reportSales(from, to) {
+  let ops = db.operations.filter(o => o.type === 'sale');
+  if (from) ops = ops.filter(o => o.ts.slice(0, 10) >= from);
+  if (to) ops = ops.filter(o => o.ts.slice(0, 10) <= to);
+
+  const rows = ops.slice().sort((a, b) => a.ts < b.ts ? 1 : -1).map(o => {
+    const p = product(o.productId);
+    return {
+      id: o.id, ts: o.ts, name: p ? p.name : '?', unit: p ? p.unit : '',
+      qty: o.qty, price: o.price, sum: o.sum, costSum: o.costSum, profit: o.profit,
+      client: o.client, paid: o.paid, paidAmount: o.paidAmount, debt: r2((o.sum || 0) - (o.paidAmount || 0))
+    };
+  });
+
+  const debts = rows.filter(r => !r.paid && r.debt > 0.001);
+
+  const totals = {
+    revenue: r2(rows.reduce((a, r) => a + (r.sum || 0), 0)),
+    cost: r2(rows.reduce((a, r) => a + (r.costSum || 0), 0)),
+    profit: r2(rows.reduce((a, r) => a + (r.profit || 0), 0)),
+    debt: r2(debts.reduce((a, r) => a + r.debt, 0))
+  };
+
+  return { rows, debts, totals };
+}
 // ---------- отчёт по потерям: усушка при обработке, списания, недостачи по инвентаризации ----------
 function reportLosses(from, to) {
   let ops = db.operations;
@@ -801,14 +847,27 @@ function route(req, res, u, data) {
     if (data.type === 'inventory' && !isAdmin) return json(res, 403, { error: 'Инвентаризацию проводит директор' });
     if (data.type === 'writeoff' && isCook(role)) return json(res, 403, { error: 'Акт списания оформляет менеджер или директор' });
     if (data.type === 'move' && isCook(role) && role !== 'cook_head') return json(res, 403, { error: 'Перемещение делает менеджер' });
+    if (data.type === 'sale' && isCook(role)) return json(res, 403, { error: 'Продажу оформляет менеджер или директор' });
     const fn = OPS[data.type];
     if (!fn) return json(res, 400, { error: 'Неизвестная операция' });
     const rec = fn(data, user);
     rec.id = nid('o'); rec.ts = new Date().toISOString(); rec.userId = user.id;
     db.operations.push(rec); save();
     const out = Object.assign({}, rec);
-    if (!isAdmin) { delete out.sum; delete out.price; delete out.writeoffs; }
+    if (!isAdmin) { delete out.sum; delete out.price; delete out.writeoffs; delete out.costSum; delete out.profit; }
     return json(res, 200, out);
+  }
+  const mSalePay = p.match(/^\/api\/sales\/([^/]+)\/pay$/);
+  if (mSalePay && req.method === 'POST') {
+    if (isCook(role)) return json(res, 403, { error: 'Нет прав' });
+    const rec = db.operations.find(o => o.id === mSalePay[1] && o.type === 'sale');
+    if (!rec) return json(res, 404, { error: 'Продажа не найдена' });
+    const add = r2(+data.amount || 0);
+    if (!(add > 0)) return json(res, 400, { error: 'Сумма должна быть больше нуля' });
+    rec.paidAmount = r2(Math.min(rec.sum, (rec.paidAmount || 0) + add));
+    rec.paid = rec.paidAmount >= rec.sum - 0.001;
+    save();
+    return json(res, 200, { id: rec.id, paidAmount: rec.paidAmount, paid: rec.paid });
   }
 if (p === '/api/ops' && req.method === 'GET') {
     let ops = db.operations;
@@ -863,6 +922,10 @@ if (p === '/api/ops' && req.method === 'GET') {
   if (p === '/api/report/losses') {
     if (!isAdmin) return json(res, 403, { error: 'Отчёт по потерям доступен директору' });
     return json(res, 200, reportLosses(u.searchParams.get('from'), u.searchParams.get('to')));
+  }
+  if (p === '/api/report/sales') {
+    if (isCook(role)) return json(res, 403, { error: 'Отчёт по реализации недоступен' });
+    return json(res, 200, reportSales(u.searchParams.get('from'), u.searchParams.get('to')));
   }
   if (p === '/api/report/output') {
     // все роли включая повара
