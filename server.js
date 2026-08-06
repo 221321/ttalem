@@ -661,6 +661,23 @@ function route(req, res, u, data) {
     return json(res, 200, sk);
   }
 
+  // ---------- пользователи (PIN-коды) ----------
+  if (p === '/api/users' && req.method === 'GET') {
+    if (!isAdmin) return json(res, 403, { error: 'Только директор' });
+    return json(res, 200, db.users.map(x => ({ id: x.id, name: x.name, role: x.role })));
+  }
+  const mUserPin = p.match(/^\/api\/users\/([^/]+)\/pin$/);
+  if (mUserPin && req.method === 'PUT') {
+    if (!isAdmin) return json(res, 403, { error: 'Только директор' });
+    const target = db.users.find(x => x.id === mUserPin[1]);
+    if (!target) return json(res, 404, { error: 'Не найден' });
+    const newPin = String(data.pin || '').trim();
+    if (!/^\d{4,8}$/.test(newPin)) return json(res, 400, { error: 'PIN — от 4 до 8 цифр' });
+    target.pin = newPin;
+    save();
+    return json(res, 200, { ok: true });
+  }
+
   // ---------- продукты ----------
   if (p === '/api/products' && req.method === 'POST') {
     const type = data.type || 'raw';
