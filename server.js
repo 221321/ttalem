@@ -196,9 +196,8 @@ function recipeCost(p, seen) {
   const items = (p.recipe || []).map(it => {
     const c = product(it.productId);
     const uc = unitCost(it.productId, Object.assign({}, seen));
-    // г→кг, мл→л, остальное как есть
-    const factor = (c && (c.unit === 'кг' || c.unit === 'л')) ? it.qty / 1000 :
-                   (c && c.unit === 'г') ? it.qty / 1000 : it.qty;
+    // г→кг, мл→л, остальное (в т.ч. 'г' и 'мл' единицы хранения) как есть
+    const factor = (c && (c.unit === 'кг' || c.unit === 'л')) ? it.qty / 1000 : it.qty;
     const cost = r2(uc * factor);
     total += cost;
     return { productId: it.productId, name: c ? c.name : '?', qty: it.qty, unit: c ? c.unit : '', unitCost: r2(uc), cost, hasRecipe: !!(c && c.recipe && c.recipe.length) };
@@ -284,8 +283,7 @@ function opProduction(o) {
   const writeoffs = p.recipe.map(it => {
     const c = product(it.productId);
     const uc = unitCost(it.productId);
-    const factor = (c && (c.unit === 'кг' || c.unit === 'л')) ? it.qty * o.count / 1000 :
-                   (c && c.unit === 'г') ? it.qty * o.count / 1000 : it.qty * o.count;
+    const factor = (c && (c.unit === 'кг' || c.unit === 'л')) ? it.qty * o.count / 1000 : it.qty * o.count;
     const val = r2(uc * factor);
     const skId = c ? (c.skladId || 'sk2') : 'sk2';
     const s = stockOf(it.productId, skId);
