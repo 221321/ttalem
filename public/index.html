@@ -205,7 +205,7 @@ var NAVS={
   cook_pastry:[['work','⚖️','Обработка'],['prod','🥪','Выпуск'],['nom','🏷️','Продукты'],['stock','📋 ','Остатки']],
   cook_head: [['work','⚖️','Обработка'],['prod','🥪','Выпуск'],['nom','🏷️','Продукты'],['stock','📋 ','Остатки'],['move','🔄','Переместить']],
   tech:      [['orders','📝','Заказы'],['nom','🏷️','Продукты'],['wo','🧂','Специи'],['output','📊',  'Выработка'],['stock','📋','Остатки']],
-  admin:     [['orders','📝','Заказы'],['cost','💰','Калькуляция'],['output','📊','Выработка'],['stock','📋','Остатки'],['losses','📉','Потери'],['sync','🔄','1С'],['users','🔒','Доступы']]
+  admin:     [['orders','📝','Заказы'],['sales','💵','Продажи'],['cost','💰','Калькуляция'],['output','📊','Выработка'],['stock','📋','Остатки'],['losses','📉','Потери'],['sync','🔄','1С'],['users','🔒','Доступы']]
 };
 function shell(inner){
   var navs=NAVS[ME.role]||NAVS.admin;
@@ -751,6 +751,59 @@ async function scrOutput(){
 }
 window.outSet=function(days){ var d=new Date(); outTo=d.toISOString().slice(0,10); d.setDate(d.getDate()-days); outFrom=d.toISOString().slice(0,10); render(); };
 
+// ====== Продажи (реализация) ======
+var saleFrom = null, saleTo = null, saleQty = '', salePriceInput = '', saleClient = '';
+async function scrSales(){
+  var from=saleFrom||today(), to=saleTo||today();
+  var dishes=D.products.filter(function(p){ return p.type==='dish'; });
+  var r=await api('/report/sales?from='+from+'&to='+to);
+  var dishOpts=dishes.map(function(d){ return '<option value="'+d.id+'" data-price="'+(d.salePrice||0)+'">'+esc(d.name)+' ('+(d.salePrice||0)+' ₸)</option>'; }).join('');
+  var totalsHtml='<div class="card"><div class="row">'
+    +'<div><label>С</label><input type="date" value="'+from+'" onchange="saleFrom=this.value;render()"></div>'
+    +'<div><label>По</label><input type="date" value="'+to+'" onchange="saleTo=this.value;render()"></div>'
+    +'</div><div class="row" style="margin-top:8px">'
+    +'<button class="btn sec sm" onclick="saleSet(0)">Сегодня</button>'
+    +'<button class="btn sec sm" onclick="saleSet(7)">Неделя</button>'
+    +'<button class="btn sec sm" onclick="saleSet(30)">Месяц</button>'
+    +'</div><p class="sub" style="margin-top:8px">Выручка: '+money(r.totals.revenue)+' · Себестоимость: '+money(r.totals.cost)+' · Прибыль: '+money(r.totals.profit)+'</p>'
+    +(r.totals.debt>0?'<p class="sub" style="color:var(--red)">Долги за период: '+money(r.totals.debt)+'</p>':'')
+    +'</div>';
+  var formHtml='<div class="card"><b>Оформить продажу</b>'
+    +'<label>Блюдо</label><select id="saP" onchange="salePriceInput=D.products.find(function(p){return p.id===this.value}).salePrice||0;renderInPlace()">'+dishOpts+'</select>'
+    +'<label>Количество</label><input class="big" id="saQ" type="number" min="1" step="1" inputmode="numeric" value="'+saleQty+'" onfocus="this.select()">'
+    +'<label>Цена за единицу, ₸</label><input class="big" id="saPrice" type="number" step="1" inputmode="decimal" value="'+salePriceInput+'">'
+    +'<label>Клиент (необязательно)</label><input id="saClient" type="text" value="'+esc(saleClient)+'" placeholder="Имя/название">'
+    +'<div style="height:8px"></div><label style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="saPaid" checked style="width:auto"> Оплачено сразу</label>'
+    +'<div style="height:10px"></div><button class="btn" onclick="saleSave()">Продать</button></div>';
+  var rowsHtml=r.rows.length ? r.rows.map(function(s){
+    return card('sl'+s.id,
+      '<span style="flex:1"><b>'+esc(s.name)+'</b> × '+fmt(s.qty)+'</span><b>'+money(s.sum)+'</b>',
+      '<div class="sub">'+new Date(s.ts).toLocaleString('ru-RU',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})+(s.client?' · '+esc(s.client):'')+'</div>'
+        +'<div class="sub">Себестоимость: '+money(s.costSum)+' · Прибыль: '+money(s.profit)+'</div>'
+        +(s.paid?'<span class="pill ok">оплачено</span>':'<span class="pill bad">долг '+money(s.debt)+'</span>'
+          +'<div style="height:6px"></div><input class="big" id="pay'+s.id+'" type="number" step="1" placeholder="Сумма оплаты" style="margin-bottom:6px">'
+          +'<button class="btn sec sm" onclick="event.stopPropagation();salePay(\''+s.id+'\')">Погасить</button>')
+    );
+  }).join('') : '<p class="sub">Продаж за период нет.</p>';
+  return '<h2>💵 Продажи</h2>'+totalsHtml+formHtml+'<div class="hl">Продажи за период</div>'+rowsHtml;
+}
+window.saleSet=function(days){ var d=new Date(); saleTo=d.toISOString().slice(0,10); d.setDate(d.getDate()-days); saleFrom=d.toISOString().slice(0,10); render(); };
+window.saleSave=async function(){
+  var pid=$('#saP').value, qty=+$('#saQ').value, price=$('#saPrice').value, client=$('#saClient').value, paid=$('#saPaid').checked;
+  if(!(qty>0)) return toast('Введите количество');
+  try{
+    await api('/ops','POST',{type:'sale',productId:pid,qty:qty,price:price,client:client,paid:paid});
+    toast('✅ Продажа оформлена'); saleQty=''; saleClient=''; await reload(); render();
+  }catch(e){ toast(e.message); }
+};
+window.salePay=async function(id){
+  var el=$('#pay'+id);
+  var v=+el.value;
+  if(!(v>0)) return toast('Введите сумму оплаты');
+  try{ await api('/sales/'+id+'/pay','POST',{amount:v}); toast('✅ Оплата зачтена'); render(); }
+  catch(e){ toast(e.message); }
+};
+
 // ====== Потери ======
 async function scrLosses(){
   var from=lossFrom||today(), to=lossTo||today();
@@ -1065,7 +1118,7 @@ window.moveSave=async function(){
 };
 
 // ====== РОУТЕР ======
-var SCREENS={work:scrWork,prod:scrProd,stock:scrStock,inv:scrInv,cost:scrCost,output:scrOutput,sync:scrSync,nom:scrNom,wo:scrWo,move:scrMove,orders:scrOrders,users:scrUsers,losses:scrLosses};
+var SCREENS={work:scrWork,prod:scrProd,stock:scrStock,inv:scrInv,cost:scrCost,output:scrOutput,sync:scrSync,nom:scrNom,wo:scrWo,move:scrMove,orders:scrOrders,users:scrUsers,losses:scrLosses,sales:scrSales};
 async function render(){
   if(!ME) return renderLogin();
   var fn=SCREENS[screen]||scrStock;
