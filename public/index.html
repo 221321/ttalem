@@ -113,6 +113,7 @@ var outFrom = null, outTo = null;
 var syncDate = null, rcptOpen = false;
 var woItems = [], woQ = '';
 var editRecipe = [];
+var nomPasteOpen = false, nomPasteText = '';
 
 var $ = function(s){ return document.querySelector(s); };
 var app = $('#app');
@@ -194,14 +195,14 @@ window.doLogin=async function(){
 
 // ====== КАРКАС ======
 var NAVS={
-  cook:      [['work','⚖️','Обработка'],['prod','🥪','Выпуск'],['nom','🏷️','Продукты'],['stock','📋','Остатки']],
-  cook_prep: [['work','⚖️','Обработка'],['prod','🥪','Выпуск'],['nom','🏷️','Продукты'],['stock','📋','Остатки']],
-  cook_sand: [['work','⚖️','Обработка'],['prod','🥪','Выпуск'],['nom','🏷️','Продукты'],['stock','📋','Остатки']],
-  cook_hot:  [['work','⚖️','Обработка'],['prod','🥪','Выпуск'],['nom','🏷️','Продукты'],['stock','📋','Остатки']],
-  cook_baker:[['work','⚖️','Обработка'],['prod','🥪','Выпуск'],['nom','🏷️','Продукты'],['stock','📋','Остатки']],
-  cook_pastry:[['work','⚖️','Обработка'],['prod','🥪','Выпуск'],['nom','🏷️','Продукты'],['stock','📋','Остатки']],
-  cook_head: [['work','⚖️','Обработка'],['prod','🥪','Выпуск'],['nom','🏷️','Продукты'],['stock','📋','Остатки'],['move','🔄','Переместить']],
-  tech:      [['orders','📝','Заказы'],['nom','🏷️','Продукты'],['wo','🧂','Специи'],['output','📊','Выработка'],['stock','📋','Остатки']],
+  cook:      [['work','⚖️','Обработка'],['prod','🥪','Выпуск'],['nom','🏷️','Продукты'],['stock','📋 ','Остатки']],
+  cook_prep: [['work','⚖️','Обработка'],['prod','🥪','Выпуск'],['nom','🏷️','Продукты'],['stock','📋 ','Остатки']],
+  cook_sand: [['work','⚖️','Обработка'],['prod','🥪','Выпуск'],['nom','🏷️','Продукты'],['stock','📋 ','Остатки']],
+  cook_hot:  [['work','⚖️','Обработка'],['prod','🥪','Выпуск'],['nom','🏷️','Продукты'],['stock','📋 ','Остатки']],
+  cook_baker:[['work','⚖️','Обработка'],['prod','🥪','Выпуск'],['nom','🏷️','Продукты'],['stock','📋 ','Остатки']],
+  cook_pastry:[['work','⚖️','Обработка'],['prod','🥪','Выпуск'],['nom','🏷️','Продукты'],['stock','📋 ','Остатки']],
+  cook_head: [['work','⚖️','Обработка'],['prod','🥪','Выпуск'],['nom','🏷️','Продукты'],['stock','📋 ','Остатки'],['move','🔄','Переместить']],
+  tech:      [['orders','📝','Заказы'],['nom','🏷️','Продукты'],['wo','🧂','Специи'],['output','📊',  'Выработка'],['stock','📋','Остатки']],
   admin:     [['orders','📝','Заказы'],['cost','💰','Калькуляция'],['output','📊','Выработка'],['stock','📋','Остатки'],['sync','🔄','1С']]
 };
 function shell(inner){
@@ -786,6 +787,7 @@ window.showLog=async function(id,name){
 async function scrSync(){
   var d=syncDate||today();
   var r=await api('/1c/export?date='+d);
+  var nd=await api('/1c/nomenclature-diff').catch(function(){ return null; });
   var S=D.settings||{};
   var settingsHtml='<div class="card"><label>Порог расхождения для уведомлений, %</label>'
     +'<input class="big" id="diffTh" type="number" step="1" min="1" value="'+(S.diffThresholdPct||5)+'">'
@@ -803,7 +805,46 @@ async function scrSync(){
     +'<div><label>Цена ₸/ед.</label><input class="big" id="rc" type="number" step="0.01" inputmode="decimal" onclick="event.stopPropagation()"></div></div>'
     +'<div style="height:10px"></div><button class="btn" onclick="event.stopPropagation();rSave()">Оприходовать</button>'
     +'<p class="sub" style="margin-top:8px">Временно. После подключения 1С этот блок исчезнет.</p></div>';
+
+  // ---- блок сверки номенклатуры ----
+  var nomHtml='<div class="card"><b>🏷️ Сверка номенклатуры с 1С</b>';
+  if(nd){
+    nomHtml+='<p class="sub" style="margin-top:6px">Последняя сверка: '+new Date(nd.ts).toLocaleString('ru-RU')+' · получено позиций: '+nd.totalIncoming+' · совпадает без изменений: '+(nd.matched-nd.matchedDetails.length)+'</p>';
+    if(nd.matchedDetails&&nd.matchedDetails.length){
+      nomHtml+='<div class="hl">Отличается наименование ('+nd.matchedDetails.length+')</div>'
+        +nd.matchedDetails.map(function(m){
+          return '<div class="li"><span class="nm">у нас: '+esc(m.ourName)+'<div class="sub">в 1С: '+esc(m.theirName)+' · код '+esc(m.code)+'</div></span></div>';
+        }).join('');
+    }
+    if(nd.newInOneC&&nd.newInOneC.length){
+      nomHtml+='<div class="hl">Новые в 1С, нет в SKY MEAL ('+nd.newInOneC.length+')</div>'
+        +nd.newInOneC.map(function(it){ return '<div class="li"><span class="nm">'+esc(it.name)+'<div class="sub">код '+esc(it.code)+(it.unit?' · '+esc(it.unit):'')+'</div></span></div>'; }).join('');
+    }
+    if(nd.missingInOneC&&nd.missingInOneC.length){
+      nomHtml+='<div class="hl">Есть у нас, не пришло из 1С ('+nd.missingInOneC.length+')</div>'
+        +nd.missingInOneC.map(function(it){ return '<div class="li"><span class="nm">'+esc(it.name)+'<div class="sub">код '+esc(it.code1c)+'</div></span></div>'; }).join('');
+    }
+    if((!nd.matchedDetails||!nd.matchedDetails.length)&&(!nd.newInOneC||!nd.newInOneC.length)&&(!nd.missingInOneC||!nd.missingInOneC.length)){
+      nomHtml+='<p class="sub" style="margin-top:8px">Расхождений нет.</p>';
+    }
+    if((nd.newInOneC&&nd.newInOneC.length)||(nd.matchedDetails&&nd.matchedDetails.length)){
+      nomHtml+='<div style="height:8px"></div>'
+        +'<label><input type="checkbox" id="nomCreateMissing" style="width:auto;display:inline-block;margin-right:6px">создавать новые позиции из 1С автоматически</label>'
+        +'<div style="height:6px"></div><button class="btn grn" onclick="nomApply()">Применить сверку</button>';
+    }
+  } else {
+    nomHtml+='<p class="sub" style="margin-top:6px">Сверки ещё не было — либо 1С ещё не присылала номенклатуру, либо проверьте вручную ниже.</p>';
+  }
+  nomHtml+='<div style="height:8px"></div><button class="btn sec sm" onclick="nomPasteOpen=!nomPasteOpen;renderInPlace()">'+(nomPasteOpen?'Скрыть ручную проверку':'Проверить вручную (вставить JSON)')+'</button>';
+  if(nomPasteOpen){
+    nomHtml+='<div style="height:8px"></div><label>JSON вида {"items":[{"code":"00001","name":"Мука","unit":"кг"}]}</label>'
+      +'<textarea id="nomPasteArea" rows="6" style="width:100%;padding:10px;border:1px solid var(--line);border-radius:10px;font-family:monospace;font-size:12px">'+esc(nomPasteText)+'</textarea>'
+      +'<div style="height:8px"></div><button class="btn sec" onclick="nomCheckPaste()">Проверить</button>';
+  }
+  nomHtml+='</div>';
+
   return '<h2>Обмен с 1С</h2>'
+    +nomHtml
     +'<div class="card"><label>Дата выгрузки</label>'
     +'<input type="date" value="'+d+'" onchange="syncDate=this.value;render()">'
     +'<div style="height:8px"></div>'
@@ -830,6 +871,30 @@ window.rSave=async function(){
   if(!(q>0)||!(c>0)) return toast('Заполните количество и цену');
   try{ await api('/ops','POST',{type:'receipt',productId:$('#rp').value,qty:q,price:c}); toast('✅ Приход записан'); await reload(); render(); }
   catch(e){ toast(e.message); }
+};
+window.nomCheckPaste=async function(){
+  nomPasteText=$('#nomPasteArea').value;
+  var parsed;
+  try{ parsed=JSON.parse(nomPasteText); }
+  catch(e){ return toast('Это не валидный JSON'); }
+  var items=Array.isArray(parsed)?parsed:parsed.items;
+  if(!Array.isArray(items)) return toast('Ожидается {"items":[...]} или массив');
+  try{
+    await api('/1c/nomenclature-diff','POST',{items:items});
+    toast('✅ Сверка выполнена'); nomPasteOpen=false; renderInPlace();
+  }catch(e){ toast(e.message); }
+};
+window.nomApply=async function(){
+  var createMissing=$('#nomCreateMissing')&&$('#nomCreateMissing').checked;
+  if(!confirm(createMissing?'Обновить совпавшие наименования и создать новые позиции из 1С?':'Обновить только совпавшие наименования? (новые позиции не будут созданы)')) return;
+  try{
+    var nd=await api('/1c/nomenclature-diff');
+    if(!nd) return toast('Нет данных сверки');
+    var items=(nd.matchedDetails||[]).map(function(m){ return {code:m.code,name:m.theirName}; })
+      .concat((nd.newInOneC||[]).map(function(it){ return {code:it.code,name:it.name,unit:it.unit}; }));
+    var r=await api('/1c/nomenclature-apply','POST',{items:items,createMissing:createMissing});
+    toast('✅ Обновлено: '+r.updated+', создано: '+r.created); await reload(); render();
+  }catch(e){ toast(e.message); }
 };
 
 // ====== ПЕРЕМЕЩЕНИЕ ======
