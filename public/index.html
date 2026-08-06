@@ -204,7 +204,7 @@ var NAVS={
   cook_pastry:[['work','⚖️','Обработка'],['prod','🥪','Выпуск'],['nom','🏷️','Продукты'],['stock','📋 ','Остатки']],
   cook_head: [['work','⚖️','Обработка'],['prod','🥪','Выпуск'],['nom','🏷️','Продукты'],['stock','📋 ','Остатки'],['move','🔄','Переместить']],
   tech:      [['orders','📝','Заказы'],['nom','🏷️','Продукты'],['wo','🧂','Специи'],['output','📊',  'Выработка'],['stock','📋','Остатки']],
-  admin:     [['orders','📝','Заказы'],['cost','💰','Калькуляция'],['output','📊','Выработка'],['stock','📋','Остатки'],['sync','🔄','1С']]
+  admin:     [['orders','📝','Заказы'],['cost','💰','Калькуляция'],['output','📊','Выработка'],['stock','📋','Остатки'],['sync','🔄','1С'],['users','🔒','Доступы']]
 };
 function shell(inner){
   var navs=NAVS[ME.role]||NAVS.admin;
@@ -800,6 +800,28 @@ window.saveSalePrice=async function(id){
   catch(e){ toast(e.message); }
 };
 
+// ====== Доступы (PIN-коды) ======
+var ROLE_NAMES={admin:'Директор',manager:'Менеджер',tech:'Технолог',cook:'Повар',cook_head:'Старший повар'};
+async function scrUsers(){
+  var users=await api('/users');
+  return '<h2>🔒 Доступы</h2>'
+    +'<p class="sub" style="margin-bottom:10px">Смените PIN, если он мог стать известен посторонним (например, был показан в переписке или расширению 1С).</p>'
+    +users.map(function(u){
+      return '<div class="card"><b>'+esc(u.name)+'</b> <span class="sub">('+(ROLE_NAMES[u.role]||u.role)+')</span>'
+        +'<div style="height:6px"></div>'
+        +'<input class="big" id="pin'+u.id+'" type="text" inputmode="numeric" placeholder="Новый PIN (4-8 цифр)">'
+        +'<div style="height:8px"></div><button class="btn sec" onclick="changePin(\''+u.id+'\')">Сменить PIN</button></div>';
+    }).join('');
+}
+window.changePin=async function(id){
+  var el=$('#pin'+id);
+  var v=el.value.trim();
+  if(!/^\d{4,8}$/.test(v)) return toast('PIN — от 4 до 8 цифр');
+  if(!confirm('Сменить PIN? Все, кто входит под этим кодом (включая расширение 1С, если оно им пользуется), должны узнать новый.')) return;
+  try{ await api('/users/'+id+'/pin','PUT',{pin:v}); toast('✅ PIN изменён'); el.value=''; }
+  catch(e){ toast(e.message); }
+};
+
 // ====== 1С ======
 async function scrSync(){
   var d=syncDate||today();
@@ -1007,7 +1029,7 @@ window.moveSave=async function(){
 };
 
 // ====== РОУТЕР ======
-var SCREENS={work:scrWork,prod:scrProd,stock:scrStock,inv:scrInv,cost:scrCost,output:scrOutput,sync:scrSync,nom:scrNom,wo:scrWo,move:scrMove,orders:scrOrders};
+var SCREENS={work:scrWork,prod:scrProd,stock:scrStock,inv:scrInv,cost:scrCost,output:scrOutput,sync:scrSync,nom:scrNom,wo:scrWo,move:scrMove,orders:scrOrders,users:scrUsers};
 async function render(){
   if(!ME) return renderLogin();
   var fn=SCREENS[screen]||scrStock;
