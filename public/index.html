@@ -110,6 +110,7 @@ var wSel = null, wDone = null, wQ = '';
 var pCnt = {}, pDate = null, pFrom = null, pTo = null;
 var stockTab = 'raw', nomTab = 'raw', recFilter = 'all';
 var outFrom = null, outTo = null;
+var lossFrom = null, lossTo = null;
 var syncDate = null, rcptOpen = false;
 var woItems = [], woQ = '';
 var editRecipe = [];
@@ -204,7 +205,7 @@ var NAVS={
   cook_pastry:[['work','⚖️','Обработка'],['prod','🥪','Выпуск'],['nom','🏷️','Продукты'],['stock','📋 ','Остатки']],
   cook_head: [['work','⚖️','Обработка'],['prod','🥪','Выпуск'],['nom','🏷️','Продукты'],['stock','📋 ','Остатки'],['move','🔄','Переместить']],
   tech:      [['orders','📝','Заказы'],['nom','🏷️','Продукты'],['wo','🧂','Специи'],['output','📊',  'Выработка'],['stock','📋','Остатки']],
-  admin:     [['orders','📝','Заказы'],['cost','💰','Калькуляция'],['output','📊','Выработка'],['stock','📋','Остатки'],['sync','🔄','1С'],['users','🔒','Доступы']]
+  admin:     [['orders','📝','Заказы'],['cost','💰','Калькуляция'],['output','📊','Выработка'],['stock','📋','Остатки'],['losses','📉','Потери'],['sync','🔄','1С'],['users','🔒','Доступы']]
 };
 function shell(inner){
   var navs=NAVS[ME.role]||NAVS.admin;
@@ -750,6 +751,41 @@ async function scrOutput(){
 }
 window.outSet=function(days){ var d=new Date(); outTo=d.toISOString().slice(0,10); d.setDate(d.getDate()-days); outFrom=d.toISOString().slice(0,10); render(); };
 
+// ====== Потери ======
+async function scrLosses(){
+  var from=lossFrom||today(), to=lossTo||today();
+  var r=await api('/report/losses?from='+from+'&to='+to);
+  var procHtml=r.processing.length ? r.processing.map(function(m){
+    return card('lp'+m.ts,
+      '<span style="flex:1"><b>'+esc(m.rawName)+' → '+esc(m.semiName)+'</b></span><span class="pill '+(m.lossPct>35?'bad':m.lossPct>20?'warn':'ok')+'">'+m.lossPct+'%</span>',
+      '<div class="sub">'+new Date(m.ts).toLocaleString('ru-RU',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})+' · '+fmt(m.qtyBefore)+' → '+fmt(m.qtyAfter)+' (потеря '+fmt(m.lossQty)+')</div>'
+    );
+  }).join('') : '<p class="sub">Нет данных.</p>';
+  var woHtml=r.writeoffs.length ? r.writeoffs.map(function(w){
+    var items=w.items.map(function(i){ return esc(i.name)+': '+fmt(i.qty)+' ('+money(i.sum)+')'; }).join(' · ');
+    return card('lw'+w.ts,
+      '<span style="flex:1"><b>'+esc(w.reason||'Списание')+'</b></span><b>'+money(w.sum)+'</b>',
+      '<div class="sub">'+new Date(w.ts).toLocaleString('ru-RU',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})+'</div><div class="sub">'+items+'</div>'
+    );
+  }).join('') : '<p class="sub">Нет данных.</p>';
+  var shHtml=r.shortages.length ? '<div class="stocklist">'+r.shortages.map(function(s){
+    return '<div class="li"><span class="nm">'+esc(s.name)+'<div class="sub">'+new Date(s.ts).toLocaleDateString('ru-RU')+' · недостача '+fmt(Math.abs(s.diff))+'</div></span><span class="vl" style="color:var(--red)">'+money(Math.abs(s.diffSum))+'</span></div>';
+  }).join('')+'</div>' : '<p class="sub">Нет данных.</p>';
+  return '<h2>📉 Потери за период</h2>'
+    +'<div class="card"><div class="row">'
+    +'<div><label>С</label><input type="date" value="'+from+'" onchange="lossFrom=this.value;render()"></div>'
+    +'<div><label>По</label><input type="date" value="'+to+'" onchange="lossTo=this.value;render()"></div>'
+    +'</div><div class="row" style="margin-top:8px">'
+    +'<button class="btn sec sm" onclick="lossSet(0)">Сегодня</button>'
+    +'<button class="btn sec sm" onclick="lossSet(7)">Неделя</button>'
+    +'<button class="btn sec sm" onclick="lossSet(30)">Месяц</button>'
+    +'</div><p class="sub" style="margin-top:8px">Списания: '+money(r.totals.writeoffSum)+' · Недостачи: '+money(r.totals.shortageSum)+'</p></div>'
+    +'<h2>Усушка/обрезка при обработке</h2>'+procHtml
+    +'<h2 style="margin-top:14px">Акты списания</h2>'+woHtml
+    +'<h2 style="margin-top:14px">Недостачи (по инвентаризации)</h2>'+shHtml;
+}
+window.lossSet=function(days){ var d=new Date(); lossTo=d.toISOString().slice(0,10); d.setDate(d.getDate()-days); lossFrom=d.toISOString().slice(0,10); render(); };
+
 // ====== КАЛЬКУЛЯЦИЯ ======
 async function scrCost(){
   var data=await api('/report/costing');
@@ -1029,7 +1065,7 @@ window.moveSave=async function(){
 };
 
 // ====== РОУТЕР ======
-var SCREENS={work:scrWork,prod:scrProd,stock:scrStock,inv:scrInv,cost:scrCost,output:scrOutput,sync:scrSync,nom:scrNom,wo:scrWo,move:scrMove,orders:scrOrders,users:scrUsers};
+var SCREENS={work:scrWork,prod:scrProd,stock:scrStock,inv:scrInv,cost:scrCost,output:scrOutput,sync:scrSync,nom:scrNom,wo:scrWo,move:scrMove,orders:scrOrders,users:scrUsers,losses:scrLosses};
 async function render(){
   if(!ME) return renderLogin();
   var fn=SCREENS[screen]||scrStock;
