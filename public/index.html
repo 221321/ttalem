@@ -812,17 +812,17 @@ async function scrSync(){
     nomHtml+='<p class="sub" style="margin-top:6px">Последняя сверка: '+new Date(nd.ts).toLocaleString('ru-RU')+' · получено позиций: '+nd.totalIncoming+' · совпадает без изменений: '+(nd.matched-nd.matchedDetails.length)+'</p>';
     if(nd.matchedDetails&&nd.matchedDetails.length){
       nomHtml+='<div class="hl">Отличается наименование ('+nd.matchedDetails.length+')</div>'
-        +nd.matchedDetails.map(function(m){
+        +'<div class="stocklist">'+nd.matchedDetails.map(function(m){
           return '<div class="li"><span class="nm">у нас: '+esc(m.ourName)+'<div class="sub">в 1С: '+esc(m.theirName)+' · код '+esc(m.code)+'</div></span></div>';
-        }).join('');
+        }).join('')+'</div>';
     }
     if(nd.newInOneC&&nd.newInOneC.length){
       nomHtml+='<div class="hl">Новые в 1С, нет в SKY MEAL ('+nd.newInOneC.length+')</div>'
-        +nd.newInOneC.map(function(it){ return '<div class="li"><span class="nm">'+esc(it.name)+'<div class="sub">код '+esc(it.code)+(it.unit?' · '+esc(it.unit):'')+'</div></span></div>'; }).join('');
+        +'<div class="stocklist">'+nd.newInOneC.map(function(it){ return '<div class="li"><span class="nm">'+esc(it.name)+'<div class="sub">код '+esc(it.code)+(it.unit?' · '+esc(it.unit):'')+'</div></span></div>'; }).join('')+'</div>';
     }
     if(nd.missingInOneC&&nd.missingInOneC.length){
       nomHtml+='<div class="hl">Есть у нас, не пришло из 1С ('+nd.missingInOneC.length+')</div>'
-        +nd.missingInOneC.map(function(it){ return '<div class="li"><span class="nm">'+esc(it.name)+'<div class="sub">код '+esc(it.code1c)+'</div></span></div>'; }).join('');
+        +'<div class="stocklist">'+nd.missingInOneC.map(function(it){ return '<div class="li"><span class="nm">'+esc(it.name)+'<div class="sub">код '+esc(it.code1c)+'</div></span></div>'; }).join('')+'</div>';
     }
     if((!nd.matchedDetails||!nd.matchedDetails.length)&&(!nd.newInOneC||!nd.newInOneC.length)&&(!nd.missingInOneC||!nd.missingInOneC.length)){
       nomHtml+='<p class="sub" style="margin-top:8px">Расхождений нет.</p>';
