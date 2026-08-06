@@ -889,6 +889,39 @@ if (p === '/api/ops' && req.method === 'GET') {
     return json(res, 200, db.lastStockDiff || null);
   }
 
+  // ---------- применение сверки остатков: подтягиваем факт из 1С на основной склад (is1cMain) ----------
+  if (p === '/api/1c/stock-apply' && req.method === 'POST') {
+    if (!isAdmin) return json(res, 403, { error: 'Только директор' });
+    const incoming = data.items || [];
+    const mainSk = db.sklads.find(s => s.is1cMain);
+    if (!mainSk) return json(res, 400, { error: 'Не найден склад, помеченный как основной (is1cMain)' });
+    const byCode = {};
+    db.products.forEach(p => { if (p.code1c) byCode[p.code1c] = p; });
+    const rows = [];
+    incoming.forEach(item => {
+      const code = String(item.code || '').trim();
+      if (!code) return;
+      const pr = byCode[code];
+      if (!pr) return; // нет в SkyMeal — сначала сверка/создание номенклатуры
+      const s = stockOf(pr.id, mainSk.id);
+      const accountQty = s.qty;
+      const uc = unitCost(pr.id);
+      const factQty = +item.qty || 0;
+      const diff = r2(factQty - accountQty);
+      const diffSum = r2(diff * uc);
+      checkDiff(pr.id, factQty, accountQty);
+      s.value = r2(Math.max(0, s.value + diffSum));
+      s.qty = factQty;
+      rows.push({ productId: pr.id, skladId: mainSk.id, accountQty, factQty, diff, diffSum });
+    });
+    const total = r2(rows.reduce((a, r) => a + r.diffSum, 0));
+    db.invHistory.unshift({ id: nid('iv'), ts: new Date().toISOString(), user: user.name, rows, total, source: '1С' });
+    if (db.invHistory.length > 50) db.invHistory = db.invHistory.slice(0, 50);
+    db.lastStockDiff = null;
+    save();
+    return json(res, 200, { applied: rows.length, total });
+  }
+
   if (p === '/api/1c/nomenclature-apply' && req.method === 'POST') {
     if (!isAdmin) return json(res, 403, { error: 'Только директор' });
     const incoming = data.items || [];
