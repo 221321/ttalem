@@ -265,9 +265,10 @@ function opProcessing(o) {
   if (o.qtyAfter > o.qtyBefore) throw new Error('Вес ПОСЛЕ больше веса ДО');
   const rawSkId = raw.skladId || 'sk2';
   const semiSkId = semi.skladId || 'sk2';
+  const sr = stockOf(o.rawId, rawSkId);
+  if (sr.qty + 0.001 < o.qtyBefore) throw new Error('Недостаточно «' + raw.name + '» на складе: есть ' + sr.qty + ', требуется ' + o.qtyBefore + '. Сначала сделайте приход.');
   const uc = unitCost(o.rawId);
   const moved = r2(uc * o.qtyBefore);
-  const sr = stockOf(o.rawId, rawSkId);
   sr.qty = r2(sr.qty - o.qtyBefore);
   sr.value = r2(Math.max(0, sr.value - moved));
   const ss = stockOf(o.semiId, semiSkId);
@@ -282,18 +283,26 @@ function opProduction(o) {
   if (!p || !p.recipe || !p.recipe.length) throw new Error('У продукта нет рецептуры');
   if (p.recipeStatus !== 'approved') throw new Error('Рецептура «' + p.name + '» не утверждена');
   if (!(o.count > 0)) throw new Error('Количество должно быть больше нуля');
-  let total = 0;
-  const writeoffs = p.recipe.map(it => {
+  // сначала считаем что потребуется и проверяем остатки — ничего не списываем, пока не убедимся что хватает всего
+  const planned = p.recipe.map(it => {
     const c = product(it.productId);
     const uc = unitCost(it.productId);
     const factor = (c && (c.unit === 'кг' || c.unit === 'л')) ? it.qty * o.count / 1000 : it.qty * o.count;
-    const val = r2(uc * factor);
     const skId = c ? (c.skladId || 'sk2') : 'sk2';
     const s = stockOf(it.productId, skId);
-    s.qty = r2(s.qty - factor);
-    s.value = r2(Math.max(0, s.value - val));
+    return { it, c, uc, factor, skId, s };
+  });
+  const insuff = planned.find(x => x.s.qty + 0.001 < x.factor);
+  if (insuff) {
+    throw new Error('Недостаточно «' + (insuff.c ? insuff.c.name : insuff.it.productId) + '» на складе: есть ' + r2(insuff.s.qty) + ', требуется ' + r2(insuff.factor) + '. Сначала сделайте обработку/приход.');
+  }
+  let total = 0;
+  const writeoffs = planned.map(x => {
+    const val = r2(x.uc * x.factor);
+    x.s.qty = r2(x.s.qty - x.factor);
+    x.s.value = r2(Math.max(0, x.s.value - val));
     total += val;
-    return { productId: it.productId, skladId: skId, qty: r2(factor), sum: val };
+    return { productId: x.it.productId, skladId: x.skId, qty: r2(x.factor), sum: val };
   });
   const outSkId = p.skladId || 'sk7';
   const sd = stockOf(o.productId, outSkId);
@@ -356,6 +365,44 @@ function opWriteoff(o) {
 const OPS = { receipt: opReceipt, processing: opProcessing, production: opProduction, inventory: opInventory, move: opMove, writeoff: opWriteoff };
 
 // ---------- отчёты ----------
+// ---------- отчёт по потерям: усушка при обработке, списания, недостачи по инвентаризации ----------
+function reportLosses(from, to) {
+  let ops = db.operations;
+  if (from) ops = ops.filter(o => o.ts.slice(0, 10) >= from);
+  if (to) ops = ops.filter(o => o.ts.slice(0, 10) <= to);
+
+  const processing = ops.filter(o => o.type === 'processing').map(o => {
+    const raw = product(o.rawId), semi = product(o.semiId);
+    return {
+      ts: o.ts, rawName: raw ? raw.name : '?', semiName: semi ? semi.name : '?',
+      qtyBefore: o.qtyBefore, qtyAfter: o.qtyAfter, lossQty: r2(o.qtyBefore - o.qtyAfter), lossPct: o.lossPct
+    };
+  });
+
+  const writeoffs = ops.filter(o => o.type === 'writeoff').map(o => ({
+    ts: o.ts, reason: o.reason,
+    items: (o.items || []).map(it => { const p = product(it.productId); return { name: p ? p.name : '?', qty: it.qty, sum: it.sum }; }),
+    sum: o.sum
+  }));
+
+  const shortages = [];
+  ops.filter(o => o.type === 'inventory').forEach(o => {
+    (o.items || []).forEach(r => {
+      if (r.diff < -0.001) {
+        const p = product(r.productId);
+        shortages.push({ ts: o.ts, name: p ? p.name : '?', diff: r.diff, diffSum: r.diffSum });
+      }
+    });
+  });
+
+  return {
+    processing, writeoffs, shortages,
+    totals: {
+      writeoffSum: r2(writeoffs.reduce((a, w) => a + (w.sum || 0), 0)),
+      shortageSum: r2(shortages.reduce((a, s) => a + Math.abs(s.diffSum || 0), 0))
+    }
+  };
+}
 function reportCosting() {
   return db.products.filter(p => p.recipe && p.recipe.length).map(p => {
     const c = recipeCost(p, {});
@@ -812,6 +859,10 @@ if (p === '/api/ops' && req.method === 'GET') {
   if (p === '/api/report/costing') {
     if (!isAdmin) return json(res, 403, { error: 'Калькуляция доступна директору' });
     return json(res, 200, reportCosting());
+  }
+  if (p === '/api/report/losses') {
+    if (!isAdmin) return json(res, 403, { error: 'Отчёт по потерям доступен директору' });
+    return json(res, 200, reportLosses(u.searchParams.get('from'), u.searchParams.get('to')));
   }
   if (p === '/api/report/output') {
     // все роли включая повара
