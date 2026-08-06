@@ -127,6 +127,9 @@ const isCook = role => role === 'cook' || role.startsWith('cook_');
   });
   // Убираем semi без рецепта и sourceId — они должны быть raw
   db.products.forEach(p => {
+    if (typeof p.salePrice !== 'number') { p.salePrice = 0; changed = true; }
+  });
+  db.products.forEach(p => {
     if (p.type === 'semi' && !p.sourceId && (!p.recipe || !p.recipe.length)) {
       p.type = 'raw'; changed = true;
     }
@@ -356,7 +359,7 @@ const OPS = { receipt: opReceipt, processing: opProcessing, production: opProduc
 function reportCosting() {
   return db.products.filter(p => p.recipe && p.recipe.length).map(p => {
     const c = recipeCost(p, {});
-    return { productId: p.id, name: p.name, type: p.type, unit: p.unit, status: p.recipeStatus || 'draft', total: c.total, items: c.items };
+    return { productId: p.id, name: p.name, type: p.type, unit: p.unit, status: p.recipeStatus || 'draft', total: c.total, items: c.items, salePrice: p.salePrice || 0 };
   });
 }
 function reportOutput(from, to, hideMoney) {
@@ -666,7 +669,7 @@ function route(req, res, u, data) {
     const np = {
       id: nid('p'), name: (data.name || '').trim(), type, unit: VALID_UNITS.includes(data.unit) ? data.unit : 'кг',
       priceKg: 0, sourceId: data.sourceId || null, code1c: isCook(role) ? '' : (data.code1c || ''),
-      skladId: data.skladId || (type === 'dish' ? 'sk7' : 'sk2'),
+      skladId: data.skladId || (type === 'dish' ? 'sk7' : 'sk2'), salePrice: 0,
       recipe: (data.recipe || []).filter(it => it.qty > 0), recipeLog: [], lastCost: 0
     };
     if (!np.name) return json(res, 400, { error: 'Введите наименование' });
@@ -691,6 +694,7 @@ function route(req, res, u, data) {
     if (data.unit !== undefined && VALID_UNITS.includes(data.unit)) pr.unit = data.unit;
     if (data.sourceId !== undefined) pr.sourceId = (data.sourceId && data.sourceId !== pr.id) ? data.sourceId : null;
     if (data.code1c !== undefined) pr.code1c = data.code1c;
+    if (data.salePrice !== undefined && !isCook(role)) pr.salePrice = +data.salePrice || 0;
     if (data.skladId !== undefined) pr.skladId = data.skladId;
     if (cleanRecipe !== undefined) pr.recipe = cleanRecipe;
     if (pr.recipe.length && !pr.recipeStatus) pr.recipeStatus = 'draft';
