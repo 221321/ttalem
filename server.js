@@ -816,6 +816,52 @@ if (p === '/api/ops' && req.method === 'GET') {
     if (!isAdmin) return json(res, 403, { error: 'Только директор' });
     return json(res, 200, { Спецификации: exportSpecs1c() });
   }
+  if (p === '/api/1c/nomenclature-diff' && req.method === 'POST') {
+    if (!isAdmin) return json(res, 403, { error: 'Только директор' });
+    const incoming = data.items || [];
+    const byCode = {};
+    db.products.forEach(p => { if (p.code1c) byCode[p.code1c] = p; });
+    const matched = [];
+    const newInOneC = [];
+    const missingInOneC = [];
+    const seenCodes = new Set();
+    incoming.forEach(item => {
+      seenCodes.add(item.code);
+      const existing = byCode[item.code];
+      if (existing) {
+        matched.push({ productId: existing.id, ourName: existing.name, theirName: item.name, code: item.code, nameChanged: existing.name !== item.name });
+      } else {
+        newInOneC.push(item);
+      }
+    });
+    db.products.forEach(p => {
+      if (p.code1c && !seenCodes.has(p.code1c)) {
+        missingInOneC.push({ productId: p.id, name: p.name, code1c: p.code1c });
+      }
+    });
+    return json(res, 200, { matched: matched.length, matchedDetails: matched.filter(m => m.nameChanged), newInOneC, missingInOneC });
+  }
+
+  if (p === '/api/1c/nomenclature-apply' && req.method === 'POST') {
+    if (!isAdmin) return json(res, 403, { error: 'Только директор' });
+    const incoming = data.items || [];
+    const byCode = {};
+    db.products.forEach(p => { if (p.code1c) byCode[p.code1c] = p; });
+    let updated = 0, created = 0;
+    incoming.forEach(item => {
+      const existing = byCode[item.code];
+      if (existing) {
+        if (existing.name !== item.name) { existing.name = item.name; updated++; }
+      } else if (data.createMissing) {
+        const nid2 = 'p' + Math.random().toString(36).slice(2, 8);
+        db.products.push({ id: nid2, name: item.name, type: 'raw', unit: item.unit || 'г', priceKg: 0, sourceId: null, code1c: item.code, recipe: [], recipeLog: [], lastCost: 0, skladId: 'sk2' });
+        created++;
+      }
+    });
+    save();
+    return json(res, 200, { updated, created });
+  }
+
   json(res, 404, { error: 'not found' });
 }
 

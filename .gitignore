@@ -1,2 +1,6 @@
 data/db.json
 data/db.json.backup-*
+approve_drafts.py
+fix_missing_type.py
+fix_units.py
+verify_data.py
