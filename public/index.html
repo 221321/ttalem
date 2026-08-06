@@ -766,9 +766,18 @@ async function scrCost(){
           var items=d.items.map(function(i){
             return '<div class="li"><span class="nm">'+esc(i.name)+(i.hasRecipe?' <span class="pill ok" style="font-size:10px">рецепт</span>':'')+'<div class="sub">'+fmt(i.qty)+' '+i.unit+' × '+money(i.unitCost)+'/'+i.unit+'</div></span><span class="vl">'+money(i.cost)+'</span></div>';
           }).join('');
+          var margin=d.salePrice>0?d.salePrice-d.total:null;
+          var marginPct=(margin!==null&&d.salePrice>0)?Math.round(margin/d.salePrice*1000)/10:null;
+          var priceBlock='<div class="row" style="margin-top:8px;align-items:center">'
+            +'<div style="flex:1"><label style="margin:0">Цена продажи, ₸</label>'
+            +'<input class="big" type="number" step="1" inputmode="decimal" id="sp'+d.productId+'" value="'+(d.salePrice||'')+'" onclick="event.stopPropagation()"></div>'
+            +'<button class="btn sec sm" style="margin-left:8px" onclick="event.stopPropagation();saveSalePrice(\''+d.productId+'\')">Сохранить</button>'
+            +'</div>'
+            +(margin!==null?'<p class="sub" style="margin-top:4px">Наценка: '+money(margin)+' ('+marginPct+'%)</p>':'');
           return card('c'+d.productId,
             '<span style="flex:1"><b>'+esc(d.name)+'</b> '+ST[d.status]+'</span><b>'+money(d.total)+'<span class="sub">/'+d.unit+'</span></b>',
             '<div style="background:var(--bg);border-radius:8px;padding:8px 10px">'+items+'</div>'
+              +priceBlock
               +'<div class="row" style="margin-top:8px">'
               +'<button class="btn sec sm" onclick="event.stopPropagation();showLog(\''+d.productId+'\',\''+esc(d.name)+'\')">📜 История</button>'
               +actBtn+'</div>'
@@ -782,6 +791,13 @@ window.showLog=async function(id,name){
     var lines=log.slice().reverse().map(function(l){ return new Date(l.ts).toLocaleString('ru-RU',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})+' · '+l.user+': '+l.text; }).join('\n');
     alert('История «'+name+'»:\n\n'+(lines||'изменений не было'));
   }catch(e){ toast(e.message); }
+};
+window.saveSalePrice=async function(id){
+  var el=$('#sp'+id);
+  var v=+el.value;
+  if(!(v>=0)) return toast('Введите цену продажи');
+  try{ await api('/products/'+id,'PUT',{salePrice:v}); toast('✅ Цена сохранена'); await reload(); renderInPlace(); }
+  catch(e){ toast(e.message); }
 };
 
 // ====== 1С ======
