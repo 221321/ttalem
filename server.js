@@ -435,8 +435,14 @@ function reportPlan() {
   });
 }
 
-// ---------- 1С экспорт: документы за дату ----------
+// ---------- 1С экспорт: документы за дату (date === 'all' — за всё время) ----------
 function export1c(date) {
+  if (date === 'all') {
+    const dates = Array.from(new Set(db.operations.map(o => o.ts.slice(0, 10)))).sort();
+    let all = [];
+    dates.forEach(d => { all = all.concat(export1c(d)); });
+    return all;
+  }
   const dayOps = db.operations.filter(op => op.ts.slice(0, 10) === date);
   const docs = [];
   let minute = 0;
