@@ -487,6 +487,7 @@ function export1c(date) {
     docs.push({
       ВидДокумента: 'КомплектацияНоменклатуры', Дата: date, Время: t(), Склад: sk ? sk.name : g.semiSkId,
       Комментарий: 'SKY MEAL: выработка ' + raw.name + ' → ' + semi.name,
+      SkyMealТип: 'processing',
       Номенклатура: { Наименование: semi.name, Код: semi.code1c || '', Количество: g.qtyAfter, Сумма: g.sum },
       Комплектующие: [{ Наименование: raw.name, Код: raw.code1c || '', Количество: g.qtyBefore, Сумма: g.sum }]
     });
@@ -511,6 +512,7 @@ function export1c(date) {
       ВидДокумента: 'КомплектацияНоменклатуры', Дата: date, Время: t(),
       Склад: sk ? sk.name : g.skladId,
       Комментарий: 'SKY MEAL: выпуск ' + d.name,
+      SkyMealТип: 'production',
       Номенклатура: { Наименование: d.name, Код: d.code1c || '', Количество: g.count, Сумма: g.sum },
       Комплектующие: Object.entries(g.wo).map(([cid, w]) => { const p = product(cid); const ws = sklad(w.skladId); return { Наименование: p.name, Код: p.code1c || '', Количество: w.qty, Сумма: w.sum, Склад: ws ? ws.name : w.skladId }; })
     });
