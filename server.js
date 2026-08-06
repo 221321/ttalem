@@ -629,6 +629,20 @@ function export1c(date) {
     });
   });
 
+  // реализация (продажи клиентам)
+  dayOps.filter(o => o.type === 'sale').forEach(o => {
+    const p = product(o.productId);
+    const sk = sklad(o.skladId);
+    docs.push({
+      ВидДокумента: 'РеализацияТМЗ', Дата: date, Время: t(),
+      Комментарий: 'SKY MEAL: продажа ' + p.name + (o.client ? ' — ' + o.client : ''),
+      Клиент: o.client || '',
+      Оплачено: !!o.paid,
+      Склад: sk ? sk.name : o.skladId,
+      Товары: [{ Наименование: p.name, Код: p.code1c || '', Количество: o.qty, Цена: o.price, Сумма: o.sum }]
+    });
+  });
+
   return docs;
 }
 
@@ -1063,6 +1077,34 @@ if (p === '/api/ops' && req.method === 'GET') {
     db.lastStockDiff = null;
     save();
     return json(res, 200, { applied: rows.length, total });
+  }
+
+  // ---------- приём продаж из 1С (если пробивают сразу в 1С, минуя сайт) ----------
+  if (p === '/api/1c/sales-import' && req.method === 'POST') {
+    if (!isAdmin) return json(res, 403, { error: 'Только директор' });
+    const incoming = data.items || [];
+    const byCode = {};
+    db.products.forEach(pr => { if (pr.code1c) byCode[pr.code1c] = pr; });
+    const already = new Set(db.operations.filter(o => o.type === 'sale' && o.ref1c).map(o => o.ref1c));
+    const created = [], skipped = [], notFound = [];
+    incoming.forEach(item => {
+      const ref = String(item.docNumber || '').trim();
+      if (ref && already.has(ref)) { skipped.push(ref); return; }
+      const code = String(item.code || '').trim();
+      const pr = byCode[code];
+      if (!pr) { notFound.push(code); return; }
+      try {
+        const rec = opSale({ productId: pr.id, qty: +item.qty || 0, price: item.price, client: item.client, paid: item.paid !== false });
+        rec.id = nid('o'); rec.ts = new Date().toISOString(); rec.userId = user.id; rec.source = '1С'; rec.ref1c = ref || undefined;
+        db.operations.push(rec);
+        created.push(rec.id);
+        if (ref) already.add(ref);
+      } catch (e) {
+        notFound.push(code + ' (' + e.message + ')');
+      }
+    });
+    save();
+    return json(res, 200, { created: created.length, skipped: skipped.length, errors: notFound });
   }
 
   if (p === '/api/1c/nomenclature-apply' && req.method === 'POST') {
