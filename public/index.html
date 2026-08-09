@@ -792,7 +792,14 @@ async function scrSales(){
           +'<button class="btn sec sm" onclick="event.stopPropagation();salePay(\''+s.id+'\')">Погасить</button>')
     );
   }).join('') : '<p class="sub">Продаж за период нет.</p>';
-  return '<h2>💵 Продажи</h2>'+totalsHtml+formHtml+'<div class="hl">Продажи за период</div>'+rowsHtml;
+  var cashSummary=await api('/cash/status').catch(function(){ return null; });
+  var cashHtml='';
+  if(cashSummary&&cashSummary.rows&&cashSummary.rows.length){
+    cashHtml='<div class="hl">💵 Наличные на руках у агентов</div>'
+      +cashSummary.rows.map(function(r2){ return '<div class="li"><span class="nm">'+esc(r2.name)+'</span><span class="vl" style="color:var(--amb)">'+money(r2.onHand)+'</span></div>'; }).join('')
+      +'<p class="sub" style="margin-top:4px">Не сдано в кассу/на счёт.</p>';
+  }
+  return '<h2>💵 Продажи</h2>'+totalsHtml+cashHtml+formHtml+'<div class="hl">Продажи за период</div>'+rowsHtml;
 }
 window.saleSet=function(days){ var d=new Date(); saleTo=d.toISOString().slice(0,10); d.setDate(d.getDate()-days); saleFrom=d.toISOString().slice(0,10); render(); };
 window.saleSave=async function(){
@@ -852,6 +859,7 @@ async function scrAgent(){
   var rep=await api('/report/my-sales?from='+from+'&to='+to);
   var dishes=D.products.filter(function(p){ return p.type==='dish'||p.type==='bread'; });
   agentClientsCache=await api('/clients');
+  var cash=await api('/cash/status');
 
   // --- блок: новая продажа ---
   var newSaleBody='';
@@ -895,6 +903,20 @@ async function scrAgent(){
   }).join('') : '<p class="sub">Долгов нет 🎉</p>';
   var debtsCard=card('agdebts','<b>💰 Долги ('+debts.length+')</b>',debtsBody);
 
+  // --- блок: наличные на руках (нужно периодически сдавать) ---
+  var cashBody='<div class="li"><span class="nm">На руках сейчас</span><span class="vl" style="font-size:18px">'+money(cash.onHand)+'</span></div>'
+    +(cash.onHand>0.01
+      ? '<label>Сумма к сдаче, ₸</label><input class="big" id="chAmount" type="number" step="1" inputmode="decimal" value="'+cash.onHand+'">'
+        +'<label>Комментарий (необязательно)</label><input id="chNote" type="text" placeholder="Кому/как сдали">'
+        +'<div style="height:10px"></div><button class="btn" onclick="cashHandover()">Сдать выручку</button>'
+      : '<p class="sub">Сдавать пока нечего.</p>')
+    +(cash.history&&cash.history.length
+      ? '<div class="hl" style="margin-top:14px">История сдач</div>'+cash.history.map(function(h){
+          return '<div class="li"><span class="nm">'+new Date(h.ts).toLocaleString('ru-RU',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})+(h.note?' · '+esc(h.note):'')+'</span><span class="vl">'+money(h.amount)+'</span></div>';
+        }).join('')
+      : '');
+  var cashCard=card('agcash','<b>💵 Наличные на руках</b>'+(cash.onHand>0.01?' <span class="pill warn">'+money(cash.onHand)+'</span>':''),cashBody);
+
   // --- блок: аналитика ---
   var analyticsBody='<div class="row">'
     +'<div><label>С</label><input type="date" value="'+from+'" onchange="agentFrom=this.value;render()"></div>'
@@ -911,7 +933,7 @@ async function scrAgent(){
     +'<div class="li"><span class="nm">Долг за период</span><span class="vl" style="color:'+(rep.totals.debt>0?'var(--red)':'inherit')+'">'+money(rep.totals.debt)+'</span></div>';
   var analyticsCard=card('aganalytics','<b>📊 Аналитика</b>',analyticsBody);
 
-  return newSaleCard+todayCard+debtsCard+analyticsCard;
+  return newSaleCard+todayCard+debtsCard+cashCard+analyticsCard;
 }
 function r2f(x){ return Math.round((+x||0)*100)/100; }
 window.agentSearch=function(v){ agentQ=v; renderInPlace(); };
@@ -945,6 +967,13 @@ window.agentPayDebt=async function(id){
   catch(e){ toast(e.message); }
 };
 window.agentSetRange=function(days){ var d=new Date(); agentTo=d.toISOString().slice(0,10); d.setDate(d.getDate()-days); agentFrom=d.toISOString().slice(0,10); render(); };
+window.cashHandover=async function(){
+  var amount=+$('#chAmount').value, note=$('#chNote')?$('#chNote').value:'';
+  if(!(amount>0)) return toast('Введите сумму');
+  if(!confirm('Сдать '+money(amount)+' наличными?')) return;
+  try{ await api('/cash/handover','POST',{amount:amount,note:note}); toast('✅ Сдача зафиксирована'); render(); }
+  catch(e){ toast(e.message); }
+};
 
 // ====== Потери ======
 async function scrLosses(){
