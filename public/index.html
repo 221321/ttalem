@@ -72,6 +72,15 @@ h2{font-size:14px;font-weight:600;margin:4px 0 10px}
 .kpis .l{font-size:11px;color:var(--mut)}
 .datehead{font-size:11px;color:var(--mut);font-weight:600;margin:12px 0 4px;padding-left:2px}
 .alertbar{display:flex;justify-content:space-between;align-items:center;background:var(--ambbg);color:var(--amb);border-radius:12px;padding:10px 14px;margin-bottom:10px;font-size:13px}
+.rtable{width:100%;border-collapse:collapse;font-size:13px;background:#fff;border-radius:12px;overflow:hidden;margin-bottom:14px}
+.rtable th{text-align:left;padding:8px 10px;background:var(--bg);color:var(--mut);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px;white-space:nowrap}
+.rtable td{padding:7px 10px;border-top:1px solid var(--line);white-space:nowrap}
+@media print{
+  nav,header,.noprint{display:none!important}
+  main{padding:0!important}
+  body{background:#fff!important}
+  .card{box-shadow:none!important;border:1px solid #ddd}
+}
 h2{letter-spacing:.3px}
 header img.lg{height:26px;display:block}
 .logochip{display:inline-flex;align-items:center;background:#1C1917;padding:6px 16px;border-radius:10px;line-height:0}
@@ -219,8 +228,8 @@ var NAVS={
   cook_pastry:[['work','⚖️','Обработка'],['prod','🥪','Выпуск'],['nom','🏷️','Продукты'],['stock','📋 ','Остатки']],
   cook_head: [['work','⚖️','Обработка'],['prod','🥪','Выпуск'],['nom','🏷️','Продукты'],['stock','📋 ','Остатки'],['move','🔄','Переместить']],
   agent:     [['agent','🚚','Продажи']],
-  tech:      [['orders','📝','Заказы'],['nom','🏷️','Продукты'],['wo','🧂','Специи'],['output','📊',  'Выработка'],['stock','📋','Остатки']],
-  admin:     [['orders','📝','Заказы'],['sales','💵','Продажи'],['cost','💰','Калькуляция'],['output','📊','Выработка'],['stock','📋','Остатки'],['losses','📉','Потери'],['sync','🔄','1С'],['users','🔒','Доступы']]
+  tech:      [['orders','📝','Заказы'],['nom','🏷️','Продукты'],['wo','🧂','Специи'],['output','📊',  'Выработка'],['stock','📋','Остатки'],['reports','📈','Отчёты']],
+  admin:     [['orders','📝','Заказы'],['sales','💵','Продажи'],['cost','💰','Калькуляция'],['output','📊','Выработка'],['stock','📋','Остатки'],['losses','📉','Потери'],['reports','📈','Отчёты'],['sync','🔄','1С'],['users','🔒','Доступы']]
 };
 function shell(inner){
   var navs=NAVS[ME.role]||NAVS.admin;
@@ -842,6 +851,82 @@ async function scrSales(){
   return '<h2>💵 Продажи</h2>'+periodHtml+cashHtml+formHtml+'<div class="hl">Продажи за период</div>'+rowsHtml;
 }
 window.saleSet=function(days){ salePeriod=days; var d=new Date(); saleTo=d.toISOString().slice(0,10); d.setDate(d.getDate()-days); saleFrom=d.toISOString().slice(0,10); render(); };
+
+// ====== Отчёты директору ======
+var reportsType='sales', reportsFrom=null, reportsTo=null, reportsPeriod=0, reportsListCache=null;
+async function scrReports(){
+  if(!reportsListCache){ reportsListCache=await api('/reports/list').catch(function(){ return []; }); }
+  var meta=reportsListCache.find(function(r){ return r.id===reportsType; })||{period:false,name:''};
+
+  var qs='type='+reportsType;
+  if(meta.period){
+    var from=reportsFrom||today(), to=reportsTo||today();
+    qs+='&from='+from+'&to='+to;
+  }
+  var rep=await api('/reports/run?'+qs).catch(function(e){ return {error:e.message}; });
+
+  var typeButtons=reportsListCache.map(function(r){
+    return '<button class="'+(r.id===reportsType?'on':'')+'" onclick="reportsSetType(\''+r.id+'\')">'+esc(r.name)+'</button>';
+  }).join('');
+
+  var periodHtml='';
+  if(meta.period){
+    periodHtml='<div class="tabbar" style="margin-top:10px">'
+      +'<button class="'+(reportsPeriod===0?'on':'')+'" onclick="reportsSetPeriod(0)">Сегодня</button>'
+      +'<button class="'+(reportsPeriod===7?'on':'')+'" onclick="reportsSetPeriod(7)">Неделя</button>'
+      +'<button class="'+(reportsPeriod===30?'on':'')+'" onclick="reportsSetPeriod(30)">Месяц</button>'
+      +'<button class="'+(reportsPeriod===365?'on':'')+'" onclick="reportsSetPeriod(365)">Год</button>'
+      +'</div>'
+      +'<div class="row" style="margin-top:10px">'
+      +'<div><label>С</label><input type="date" value="'+(reportsFrom||today())+'" onchange="reportsFrom=this.value;reportsPeriod=-1;render()"></div>'
+      +'<div><label>По</label><input type="date" value="'+(reportsTo||today())+'" onchange="reportsTo=this.value;reportsPeriod=-1;render()"></div>'
+      +'</div>';
+  }
+
+  var contentHtml='';
+  if(rep.error){
+    contentHtml='<p class="sub" style="color:var(--red)">'+esc(rep.error)+'</p>';
+  } else if(rep.title){
+    contentHtml+='<h3 style="margin:16px 0 4px">'+esc(rep.title)+'</h3>';
+    if(rep.totals&&rep.totals.length){
+      contentHtml+='<div class="kpis" style="margin:6px 0 14px">'+rep.totals.map(function(t){
+        return '<div><span class="l">'+esc(t.label)+'</span><span class="n">'+(t.money?money(t.value):fmt(t.value))+'</span></div>';
+      }).join('')+'</div>';
+    }
+    (rep.tables||[]).forEach(function(t){
+      if(!t.rows.length) return;
+      contentHtml+='<div class="hl">'+esc(t.title)+' ('+t.rows.length+')</div>'
+        +'<div style="overflow-x:auto"><table class="rtable"><thead><tr>'+t.headers.map(function(h){ return '<th>'+esc(h)+'</th>'; }).join('')+'</tr></thead><tbody>'
+        +t.rows.map(function(row){ return '<tr>'+row.map(function(c){ return '<td>'+(typeof c==='number'?fmt(c):esc(c==null?'':String(c)))+'</td>'; }).join('')+'</tr>'; }).join('')
+        +'</tbody></table></div>';
+    });
+  }
+
+  return '<h2>📈 Отчёты</h2>'
+    +'<div class="card noprint"><div class="row" style="flex-wrap:wrap;gap:6px">'+typeButtons+'</div>'+periodHtml+'</div>'
+    +'<div class="card noprint" style="display:flex;gap:8px;flex-wrap:wrap">'
+      +'<button class="btn sec sm" onclick="reportsDownloadCsv()">⬇️ Скачать CSV (Excel)</button>'
+      +'<button class="btn sec sm" onclick="window.print()">🖨️ Печать / PDF</button>'
+    +'</div>'
+    +'<div id="reportPrintArea">'+contentHtml+'</div>';
+}
+window.reportsSetType=function(t){ reportsType=t; render(); };
+window.reportsSetPeriod=function(days){ reportsPeriod=days; var d=new Date(); reportsTo=d.toISOString().slice(0,10); d.setDate(d.getDate()-days); reportsFrom=d.toISOString().slice(0,10); render(); };
+window.reportsDownloadCsv=async function(){
+  var meta=(reportsListCache||[]).find(function(r){ return r.id===reportsType; })||{period:false};
+  var qs='type='+reportsType+'&format=csv';
+  if(meta.period){ qs+='&from='+(reportsFrom||today())+'&to='+(reportsTo||today()); }
+  try{
+    var r=await fetch('/api'+'/reports/run?'+qs,{headers:{'x-token':TOKEN}});
+    if(!r.ok) throw new Error('Ошибка скачивания');
+    var blob=await r.blob();
+    var url=URL.createObjectURL(blob);
+    var a=document.createElement('a');
+    a.href=url; a.download=reportsType+(meta.period?('_'+(reportsFrom||today())+'_'+(reportsTo||today())):'')+'.csv';
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+  }catch(e){ toast(e.message); }
+};
 window.saleSave=async function(){
   var pid=$('#saP').value, qty=+$('#saQ').value, price=$('#saPrice').value, paid=$('#saPaid').checked;
   if(!(qty>0)) return toast('Введите количество');
@@ -1552,7 +1637,7 @@ window.moveSave=async function(){
 };
 
 // ====== РОУТЕР ======
-var SCREENS={work:scrWork,prod:scrProd,stock:scrStock,inv:scrInv,cost:scrCost,output:scrOutput,sync:scrSync,nom:scrNom,wo:scrWo,move:scrMove,orders:scrOrders,users:scrUsers,losses:scrLosses,sales:scrSales,agent:scrAgent};
+var SCREENS={work:scrWork,prod:scrProd,stock:scrStock,inv:scrInv,cost:scrCost,output:scrOutput,sync:scrSync,nom:scrNom,wo:scrWo,move:scrMove,orders:scrOrders,users:scrUsers,losses:scrLosses,sales:scrSales,agent:scrAgent,reports:scrReports};
 async function render(){
   if(!ME) return renderLogin();
   var fn=SCREENS[screen]||scrStock;
