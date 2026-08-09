@@ -380,11 +380,24 @@ function opSale(o) {
   const sum = r2(price * o.qty);
   s.qty = r2(s.qty - o.qty);
   s.value = r2(Math.max(0, s.value - costSum));
-  const paid = !!o.paid;
-  const paidAmount = paid ? sum : r2(Math.min(sum, +o.paidAmount || 0));
+
+  // разбивка оплаты нал/QR/долг (для торговых/водителей на выезде); если её не прислали —
+  // работает старый режим: paid=true/false целиком
+  let paymentCash = 0, paymentQr = 0;
+  if (o.paymentCash != null || o.paymentQr != null) {
+    paymentCash = r2(Math.max(0, +o.paymentCash || 0));
+    paymentQr = r2(Math.max(0, +o.paymentQr || 0));
+  } else if (o.paid) {
+    paymentCash = sum; // старое поведение: "оплачено" без разбивки — считаем наличными
+  }
+  const paidAmount = r2(Math.min(sum, paymentCash + paymentQr));
+  const paymentDebt = r2(Math.max(0, sum - paidAmount));
+  const paid = paidAmount >= sum - 0.001;
+
   return {
     type: 'sale', productId: o.productId, skladId: skId, qty: o.qty, price, sum, costSum,
-    profit: r2(sum - costSum), client: (o.client || '').trim(), paid: paidAmount >= sum - 0.001, paidAmount
+    profit: r2(sum - costSum), client: (o.client || '').trim(),
+    paymentCash, paymentQr, paymentDebt, paid, paidAmount
   };
 }
 const OPS = { receipt: opReceipt, processing: opProcessing, production: opProduction, inventory: opInventory, move: opMove, writeoff: opWriteoff, sale: opSale };
@@ -403,6 +416,7 @@ function reportSales(from, to) {
       id: o.id, ts: o.ts, name: p ? p.name : '?', unit: p ? p.unit : '',
       qty: o.qty, price: o.price, sum: o.sum, costSum: o.costSum, profit: o.profit,
       client: o.client, paid: o.paid, paidAmount: o.paidAmount, debt: r2((o.sum || 0) - (o.paidAmount || 0)),
+      paymentCash: o.paymentCash || 0, paymentQr: o.paymentQr || 0,
       sellerId: o.userId, sellerName: seller ? seller.name : '?', source: o.source || 'сайт'
     };
   });
@@ -755,6 +769,9 @@ function route(req, res, u, data) {
     if (!rec) return json(res, 404, { error: 'Продажа не найдена: ' + data.ref });
     rec.paidAmount = r2(Math.min(rec.sum, +data.paidAmount || 0));
     rec.paid = !!data.paid || rec.paidAmount >= rec.sum - 0.001;
+    rec.paymentDebt = r2(Math.max(0, rec.sum - rec.paidAmount));
+    // 1С не разбивает нал/QR, поэтому фактическую сумму относим в нал, чтобы паритет с продажами сходился
+    rec.paymentCash = r2(Math.max(rec.paymentCash || 0, rec.paidAmount - (rec.paymentQr || 0)));
     save();
     return json(res, 200, { id: rec.id, paidAmount: rec.paidAmount, paid: rec.paid });
   }
@@ -805,9 +822,23 @@ function route(req, res, u, data) {
   }
 
   // ---------- пользователи (PIN-коды) ----------
+  const VALID_USER_ROLES = ['admin', 'tech', 'agent', 'cook', 'cook_prep', 'cook_sand', 'cook_hot', 'cook_baker', 'cook_pastry', 'cook_head'];
   if (p === '/api/users' && req.method === 'GET') {
     if (!isAdmin) return json(res, 403, { error: 'Только директор' });
     return json(res, 200, db.users.map(x => ({ id: x.id, name: x.name, role: x.role })));
+  }
+  if (p === '/api/users' && req.method === 'POST') {
+    if (!isAdmin) return json(res, 403, { error: 'Только директор' });
+    const name = String(data.name || '').trim();
+    const newRole = String(data.role || '');
+    const newPin = String(data.pin || '').trim();
+    if (!name) return json(res, 400, { error: 'Введите имя' });
+    if (!VALID_USER_ROLES.includes(newRole)) return json(res, 400, { error: 'Неверная роль' });
+    if (!/^\d{4,8}$/.test(newPin)) return json(res, 400, { error: 'PIN — от 4 до 8 цифр' });
+    if (db.users.some(u => u.pin === newPin)) return json(res, 400, { error: 'Такой PIN уже занят другим сотрудником' });
+    const nu = { id: nid('u'), name, role: newRole, pin: newPin };
+    db.users.push(nu); save();
+    return json(res, 200, { id: nu.id, name: nu.name, role: nu.role });
   }
   const mUserPin = p.match(/^\/api\/users\/([^/]+)\/pin$/);
   if (mUserPin && req.method === 'PUT') {
@@ -916,10 +947,16 @@ function route(req, res, u, data) {
     if (isAgent(role) && rec.userId !== user.id) return json(res, 403, { error: 'Можно отмечать оплату только по своим продажам' });
     const add = r2(+data.amount || 0);
     if (!(add > 0)) return json(res, 400, { error: 'Сумма должна быть больше нуля' });
-    rec.paidAmount = r2(Math.min(rec.sum, (rec.paidAmount || 0) + add));
+    const method = data.method === 'qr' ? 'qr' : 'cash'; // куда зачислить погашение долга
+    const room = r2(rec.sum - rec.paidAmount); // сколько ещё можно принять
+    const applied = r2(Math.min(add, room));
+    if (method === 'qr') rec.paymentQr = r2((rec.paymentQr || 0) + applied);
+    else rec.paymentCash = r2((rec.paymentCash || 0) + applied);
+    rec.paidAmount = r2(Math.min(rec.sum, (rec.paidAmount || 0) + applied));
+    rec.paymentDebt = r2(Math.max(0, rec.sum - rec.paidAmount));
     rec.paid = rec.paidAmount >= rec.sum - 0.001;
     save();
-    return json(res, 200, { id: rec.id, paidAmount: rec.paidAmount, paid: rec.paid });
+    return json(res, 200, { id: rec.id, paidAmount: rec.paidAmount, paid: rec.paid, paymentDebt: rec.paymentDebt });
   }
 if (p === '/api/ops' && req.method === 'GET') {
     let ops = db.operations;
@@ -934,7 +971,12 @@ if (p === '/api/ops' && req.method === 'GET') {
     if (type) ops = ops.filter(o => o.type === type);
     if (mine) ops = ops.filter(o => o.userId === user.id);
     ops = ops.slice(-500);
-    if (!isAdmin) ops = ops.map(o => { const c = Object.assign({}, o); delete c.sum; delete c.price; delete c.writeoffs; return c; });
+    if (!isAdmin) ops = ops.map(o => {
+      const c = Object.assign({}, o);
+      delete c.writeoffs; delete c.costSum; delete c.profit; // себестоимость/прибыль — только директору
+      if (!isAgent(role)) { delete c.sum; delete c.price; } // агенту сумма/цена нужны — это то, что он собирает с клиента
+      return c;
+    });
     return json(res, 200, ops);
   }
 
@@ -978,6 +1020,21 @@ if (p === '/api/ops' && req.method === 'GET') {
   if (p === '/api/report/sales') {
     if (isCook(role) || isAgent(role)) return json(res, 403, { error: 'Отчёт по реализации недоступен' });
     return json(res, 200, reportSales(u.searchParams.get('from'), u.searchParams.get('to')));
+  }
+  // лёгкая аналитика "только моё" — для торгового/водителя, без доступа к общему отчёту компании
+  if (p === '/api/report/my-sales') {
+    const from = u.searchParams.get('from') || today();
+    const to = u.searchParams.get('to') || today();
+    const mine = db.operations.filter(o => o.type === 'sale' && o.userId === user.id && o.ts.slice(0, 10) >= from && o.ts.slice(0, 10) <= to);
+    const totals = mine.reduce((a, o) => {
+      a.revenue = r2(a.revenue + (o.sum || 0));
+      a.cash = r2(a.cash + (o.paymentCash || 0));
+      a.qr = r2(a.qr + (o.paymentQr || 0));
+      a.debt = r2(a.debt + (o.paymentDebt || 0));
+      a.count++;
+      return a;
+    }, { revenue: 0, cash: 0, qr: 0, debt: 0, count: 0 });
+    return json(res, 200, { from, to, totals });
   }
   if (p === '/api/report/output') {
     // все роли включая повара
