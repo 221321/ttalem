@@ -116,6 +116,9 @@ var woItems = [], woQ = '';
 var editRecipe = [];
 var nomPasteOpen = false, nomPasteText = '';
 var stPasteOpen = false, stPasteText = '';
+var agentQ = '', agentSel = null, agentQty = 1, agentPrice = 0, agentClient = '';
+var agentCash = 0, agentQr = 0, agentFrom = null, agentTo = null;
+var newUserRole = 'agent';
 
 var $ = function(s){ return document.querySelector(s); };
 var app = $('#app');
@@ -125,7 +128,7 @@ var today = function(){ return new Date().toISOString().slice(0,10); };
 var P = function(id){ return D.products.find(function(p){ return p.id===id; }) || {name:'?',unit:'',recipe:[],type:'raw',skladId:'sk2'}; };
 var SK = function(id){ return (D.sklads||[]).find(function(s){ return s.id===id; }) || {name:id||'—'}; };
 var esc = function(s){ return String(s==null?'':s).replace(/[&<>"]/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); };
-var ROLE = {cook:'повар',cook_prep:'повар заготовок',cook_sand:'повар сэндвичей',cook_hot:'повар горячего',cook_baker:'пекарь',cook_pastry:'кондитер',cook_head:'главный повар',tech:'менеджер',admin:'директор'};
+var ROLE = {cook:'повар',cook_prep:'повар заготовок',cook_sand:'повар сэндвичей',cook_hot:'повар горячего',cook_baker:'пекарь',cook_pastry:'кондитер',cook_head:'главный повар',tech:'менеджер',admin:'директор',agent:'торговый / водитель'};
 var isCook = function(r){ return r==='cook'||r.startsWith('cook_'); };
 var hasRecipe = function(p){ return p&&p.recipe&&p.recipe.length>0; };
 var CATS = [
@@ -175,6 +178,7 @@ async function renderLogin(){
     +'<select id="logincat" style="font-size:17px;padding:14px">'
     +'<option value="cook">Повар</option>'
     +'<option value="tech">Менеджер</option>'
+    +'<option value="agent">Торговый / водитель</option>'
     +'<option value="admin">Директор</option>'
     +'</select>'
     +'<label style="font-size:14px">Пароль</label>'
@@ -190,7 +194,7 @@ window.doLogin=async function(){
     var r=await api('/login','POST',{category:cat,pin:pinVal});
     TOKEN=r.token; ME=r.user;
     sessionStorage.setItem('tok',TOKEN); sessionStorage.setItem('me',JSON.stringify(ME));
-    screen=isCook(ME.role)?'work':ME.role==='tech'?'nom':'cost';
+    screen=isCook(ME.role)?'work':ME.role==='agent'?'agent':ME.role==='tech'?'nom':'cost';
     await reload(); render();
   }catch(e){ toast(e.message); $('#loginpin').value=''; }
 };
@@ -204,6 +208,7 @@ var NAVS={
   cook_baker:[['work','⚖️','Обработка'],['prod','🥪','Выпуск'],['nom','🏷️','Продукты'],['stock','📋 ','Остатки']],
   cook_pastry:[['work','⚖️','Обработка'],['prod','🥪','Выпуск'],['nom','🏷️','Продукты'],['stock','📋 ','Остатки']],
   cook_head: [['work','⚖️','Обработка'],['prod','🥪','Выпуск'],['nom','🏷️','Продукты'],['stock','📋 ','Остатки'],['move','🔄','Переместить']],
+  agent:     [['agent','🚚','Продажи']],
   tech:      [['orders','📝','Заказы'],['nom','🏷️','Продукты'],['wo','🧂','Специи'],['output','📊',  'Выработка'],['stock','📋','Остатки']],
   admin:     [['orders','📝','Заказы'],['sales','💵','Продажи'],['cost','💰','Калькуляция'],['output','📊','Выработка'],['stock','📋','Остатки'],['losses','📉','Потери'],['sync','🔄','1С'],['users','🔒','Доступы']]
 };
@@ -804,6 +809,110 @@ window.salePay=async function(id){
   catch(e){ toast(e.message); }
 };
 
+// ====== ТОРГОВЫЙ / ВОДИТЕЛЬ: одна страница ======
+async function scrAgent(){
+  var mySales=await api('/ops?type=sale');
+  var todaysSales=mySales.filter(function(o){ return o.ts.slice(0,10)===today(); });
+  var debts=mySales.filter(function(o){ return !o.paid; });
+  var from=agentFrom||today(), to=agentTo||today();
+  var rep=await api('/report/my-sales?from='+from+'&to='+to);
+  var dishes=D.products.filter(function(p){ return p.type==='dish'||p.type==='bread'; });
+
+  // --- блок: новая продажа ---
+  var newSaleBody='';
+  if(!agentSel){
+    var res=agentQ?filterList(dishes,agentQ).slice(0,20):dishes.slice(0,20);
+    newSaleBody='<div class="search"><input id="agSearch" placeholder="Найти товар..." value="'+esc(agentQ)+'" oninput="agentSearch(this.value)" autocomplete="off"><span class="clr" onclick="agentClear()" style="display:'+(agentQ?'block':'none')+'">✕</span></div>'
+      +'<div class="srlist">'+(res.map(function(p){ return '<div class="sritem" onclick="agentPick(\''+p.id+'\')">'+CAT(p.type).icon+' '+esc(p.name)+' <span class="sub">'+(p.salePrice||0)+' ₸</span></div>'; }).join('')||'<div class="sritem sub">Ничего не найдено</div>')+'</div>';
+  } else {
+    var p=P(agentSel);
+    newSaleBody='<span class="pill ok">'+esc(p.name)+'</span>'
+      +'<label>Количество, '+p.unit+'</label><input class="big" id="agQty" type="number" step="0.01" inputmode="decimal" value="'+agentQty+'" oninput="agentCalc()">'
+      +'<label>Цена за единицу, ₸</label><input class="big" id="agPrice" type="number" step="1" inputmode="decimal" value="'+(agentPrice||p.salePrice||0)+'" oninput="agentCalc()">'
+      +'<div id="agTotal" class="sub" style="text-align:center;margin:10px 0;font-size:16px;font-weight:600"></div>'
+      +'<label>Клиент (необязательно)</label><input id="agClient" type="text" value="'+esc(agentClient)+'" placeholder="Имя/название">'
+      +'<div class="row" style="margin-top:8px">'
+      +'<div><label>Наличные, ₸</label><input class="big" id="agCash" type="number" step="1" inputmode="decimal" value="'+(agentCash||'')+'" oninput="agentCalc()"></div>'
+      +'<div><label>QR / карта, ₸</label><input class="big" id="agQr" type="number" step="1" inputmode="decimal" value="'+(agentQr||'')+'" oninput="agentCalc()"></div>'
+      +'</div>'
+      +'<div id="agDebt" class="sub" style="margin-top:8px"></div>'
+      +'<div style="height:10px"></div><button class="btn" id="agGo" onclick="agentSave()">Оформить продажу</button>'
+      +'<button class="btn sec sm" style="margin-top:8px" onclick="agentSel=null;renderInPlace()">← Выбрать другой товар</button>';
+  }
+  var newSaleCard=card('agnew','<b>🆕 Новая продажа</b>',newSaleBody);
+
+  // --- блок: мои продажи сегодня ---
+  var todayList=todaysSales.length ? todaysSales.slice().reverse().map(function(s){
+    var debtVal=(s.sum!=null&&s.paidAmount!=null)?r2f(s.sum-s.paidAmount):0;
+    return '<div class="li"><span class="nm">'+esc(P(s.productId).name)+' × '+fmt(s.qty)+(s.client?' · '+esc(s.client):'')+'<div class="sub">'+opTime(s)+'</div></span>'
+      +(s.paid?'<span class="pill ok">оплачено'+(s.sum!=null?' · '+money(s.sum):'')+'</span>':'<span class="pill bad">долг '+money(debtVal)+'</span>')+'</div>';
+  }).join('') : '<p class="sub">Сегодня продаж ещё не было.</p>';
+  var todayCard=card('agtoday','<b>📋 Мои продажи сегодня ('+todaysSales.length+')</b>',todayList);
+
+  // --- блок: долги (за клиентами, по всем моим продажам) ---
+  var debtsBody=debts.length ? debts.map(function(s){
+    var debtVal=(s.sum!=null&&s.paidAmount!=null)?r2f(s.sum-s.paidAmount):0;
+    return '<div class="card" style="border-color:var(--red)"><b>'+esc(s.client||'Без имени')+'</b> <span class="sub">'+esc(P(s.productId).name)+' × '+fmt(s.qty)+'</span>'
+      +'<div style="margin-top:4px" class="pill bad">долг '+money(debtVal)+'</div>'
+      +'<div class="row" style="margin-top:8px">'
+      +'<input id="dp'+s.id+'" type="number" step="1" placeholder="Сумма">'
+      +'<select id="dm'+s.id+'" style="max-width:120px"><option value="cash">Нал</option><option value="qr">QR</option></select>'
+      +'</div><button class="btn sec sm" style="margin-top:8px" onclick="agentPayDebt(\''+s.id+'\')">Погасить</button></div>';
+  }).join('') : '<p class="sub">Долгов нет 🎉</p>';
+  var debtsCard=card('agdebts','<b>💰 Долги ('+debts.length+')</b>',debtsBody);
+
+  // --- блок: аналитика ---
+  var analyticsBody='<div class="row">'
+    +'<div><label>С</label><input type="date" value="'+from+'" onchange="agentFrom=this.value;render()"></div>'
+    +'<div><label>По</label><input type="date" value="'+to+'" onchange="agentTo=this.value;render()"></div>'
+    +'</div><div class="row" style="margin-top:8px">'
+    +'<button class="btn sec sm" onclick="agentSetRange(0)">Сегодня</button>'
+    +'<button class="btn sec sm" onclick="agentSetRange(7)">Неделя</button>'
+    +'<button class="btn sec sm" onclick="agentSetRange(30)">Месяц</button>'
+    +'</div>'
+    +'<div class="li"><span class="nm">Продаж</span><span class="vl">'+rep.totals.count+'</span></div>'
+    +'<div class="li"><span class="nm">Выручка</span><span class="vl">'+money(rep.totals.revenue)+'</span></div>'
+    +'<div class="li"><span class="nm">Наличные</span><span class="vl">'+money(rep.totals.cash)+'</span></div>'
+    +'<div class="li"><span class="nm">QR / карта</span><span class="vl">'+money(rep.totals.qr)+'</span></div>'
+    +'<div class="li"><span class="nm">Долг за период</span><span class="vl" style="color:'+(rep.totals.debt>0?'var(--red)':'inherit')+'">'+money(rep.totals.debt)+'</span></div>';
+  var analyticsCard=card('aganalytics','<b>📊 Аналитика</b>',analyticsBody);
+
+  return newSaleCard+todayCard+debtsCard+analyticsCard;
+}
+function r2f(x){ return Math.round((+x||0)*100)/100; }
+window.agentSearch=function(v){ agentQ=v; renderInPlace(); };
+window.agentClear=function(){ agentQ=''; renderInPlace(); };
+window.agentPick=function(id){ agentSel=id; agentQty=1; var p=P(id); agentPrice=p.salePrice||0; agentClient=''; agentCash=0; agentQr=0; exp.agnew=true; render(); };
+window.agentCalc=function(){
+  agentQty=+($('#agQty')?$('#agQty').value:1)||0;
+  agentPrice=+($('#agPrice')?$('#agPrice').value:0)||0;
+  agentCash=+($('#agCash')?$('#agCash').value:0)||0;
+  agentQr=+($('#agQr')?$('#agQr').value:0)||0;
+  agentClient=$('#agClient')?$('#agClient').value:'';
+  var total=r2f(agentQty*agentPrice);
+  var paid=r2f(agentCash+agentQr);
+  var debt=Math.max(0,r2f(total-paid));
+  if($('#agTotal')) $('#agTotal').textContent='Итого: '+money(total);
+  if($('#agDebt')) $('#agDebt').innerHTML=debt>0.001?'<span class="pill bad">долг останется: '+money(debt)+'</span>':'<span class="pill ok">оплачено полностью</span>';
+};
+window.agentSave=async function(){
+  if(!(agentQty>0)) return toast('Введите количество');
+  try{
+    await api('/ops','POST',{type:'sale',productId:agentSel,qty:agentQty,price:agentPrice,client:agentClient,paymentCash:agentCash,paymentQr:agentQr});
+    toast('✅ Продажа оформлена');
+    agentSel=null; agentQty=1; agentPrice=0; agentClient=''; agentCash=0; agentQr=0;
+    await reload(); render();
+  }catch(e){ toast(e.message); }
+};
+window.agentPayDebt=async function(id){
+  var amt=+($('#dp'+id)?$('#dp'+id).value:0);
+  var method=$('#dm'+id)?$('#dm'+id).value:'cash';
+  if(!(amt>0)) return toast('Введите сумму');
+  try{ await api('/sales/'+id+'/pay','POST',{amount:amt,method:method}); toast('✅ Оплата зачтена'); await reload(); render(); }
+  catch(e){ toast(e.message); }
+};
+window.agentSetRange=function(days){ var d=new Date(); agentTo=d.toISOString().slice(0,10); d.setDate(d.getDate()-days); agentFrom=d.toISOString().slice(0,10); render(); };
+
 // ====== Потери ======
 async function scrLosses(){
   var from=lossFrom||today(), to=lossTo||today();
@@ -890,10 +999,17 @@ window.saveSalePrice=async function(id){
 };
 
 // ====== Доступы (PIN-коды) ======
-var ROLE_NAMES={admin:'Директор',manager:'Менеджер',tech:'Технолог',cook:'Повар',cook_head:'Старший повар'};
+var ROLE_NAMES={admin:'Директор',tech:'Менеджер',agent:'Торговый / водитель',cook:'Повар',cook_prep:'Повар заготовок',cook_sand:'Повар сэндвичей',cook_hot:'Повар горячего',cook_baker:'Пекарь',cook_pastry:'Кондитер',cook_head:'Старший повар'};
 async function scrUsers(){
   var users=await api('/users');
-  return '<h2>🔒 Доступы</h2>'
+  var roleOpts=Object.keys(ROLE_NAMES).map(function(r){ return '<option value="'+r+'"'+(r===newUserRole?' selected':'')+'>'+ROLE_NAMES[r]+'</option>'; }).join('');
+  var newUserForm='<div class="card"><b>➕ Новый сотрудник</b>'
+    +'<label>Имя</label><input id="nuName" type="text" placeholder="Имя Фамилия">'
+    +'<label>Роль</label><select id="nuRole" onchange="newUserRole=this.value">'+roleOpts+'</select>'
+    +'<label>PIN (4-8 цифр)</label><input id="nuPin" type="text" inputmode="numeric" placeholder="****">'
+    +'<div style="height:8px"></div><button class="btn" onclick="createUser()">Создать</button></div>';
+  return '<h2>🔒 Доступы</h2>'+newUserForm
+    +'<div class="hl">Сотрудники</div>'
     +'<p class="sub" style="margin-bottom:10px">Смените PIN, если он мог стать известен посторонним (например, был показан в переписке или расширению 1С).</p>'
     +users.map(function(u){
       return '<div class="card"><b>'+esc(u.name)+'</b> <span class="sub">('+(ROLE_NAMES[u.role]||u.role)+')</span>'
@@ -902,6 +1018,13 @@ async function scrUsers(){
         +'<div style="height:8px"></div><button class="btn sec" onclick="changePin(\''+u.id+'\')">Сменить PIN</button></div>';
     }).join('');
 }
+window.createUser=async function(){
+  var name=$('#nuName').value.trim(), role=$('#nuRole').value, pin=$('#nuPin').value.trim();
+  if(!name) return toast('Введите имя');
+  if(!/^\d{4,8}$/.test(pin)) return toast('PIN — от 4 до 8 цифр');
+  try{ await api('/users','POST',{name:name,role:role,pin:pin}); toast('✅ Сотрудник добавлен'); render(); }
+  catch(e){ toast(e.message); }
+};
 window.changePin=async function(id){
   var el=$('#pin'+id);
   var v=el.value.trim();
@@ -1118,7 +1241,7 @@ window.moveSave=async function(){
 };
 
 // ====== РОУТЕР ======
-var SCREENS={work:scrWork,prod:scrProd,stock:scrStock,inv:scrInv,cost:scrCost,output:scrOutput,sync:scrSync,nom:scrNom,wo:scrWo,move:scrMove,orders:scrOrders,users:scrUsers,losses:scrLosses,sales:scrSales};
+var SCREENS={work:scrWork,prod:scrProd,stock:scrStock,inv:scrInv,cost:scrCost,output:scrOutput,sync:scrSync,nom:scrNom,wo:scrWo,move:scrMove,orders:scrOrders,users:scrUsers,losses:scrLosses,sales:scrSales,agent:scrAgent};
 async function render(){
   if(!ME) return renderLogin();
   var fn=SCREENS[screen]||scrStock;
