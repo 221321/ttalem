@@ -38,10 +38,29 @@ for p in db["products"]:
     for item in p.get("recipe", []):
         if item.get("productId") in remap:
             item["productId"] = remap[item["productId"]]
+    # sourceId (полуфабрикат -> сырьё) тоже мог указывать на удаляемый дубль
+    if p.get("sourceId") in remap:
+        p["sourceId"] = remap[p["sourceId"]]
 
+# остатки: если у обоих дублей были остатки на одном складе — СКЛАДЫВАЕМ,
+# а не затираем один другим (склады хранятся как {skladId: {qty, value}})
 new_stock = {}
 for pid, v in db.get("stock", {}).items():
-    new_stock[remap.get(pid, pid)] = v
+    target = remap.get(pid, pid)
+    if target not in new_stock:
+        new_stock[target] = v
+    else:
+        merged = dict(new_stock[target])
+        for sk_id, sk_val in v.items():
+            if sk_id in merged:
+                merged[sk_id] = {
+                    "qty": round(merged[sk_id].get("qty", 0) + sk_val.get("qty", 0), 4),
+                    "value": round(merged[sk_id].get("value", 0) + sk_val.get("value", 0), 4),
+                }
+            else:
+                merged[sk_id] = sk_val
+        new_stock[target] = merged
+        print(f"склеены остатки на складах для {target}: {list(v.keys())} присоединены к существующим")
 db["stock"] = new_stock
 
 for op in db.get("operations", []):
@@ -56,17 +75,19 @@ db["products"] = [p for p in db["products"] if p["id"] not in to_remove]
 after = len(db["products"])
 print(f"Удалено дублей: {before - after}")
 
-# проверка целостности: все ли productId в recipe существуют
+# проверка целостности: все ли productId в recipe и sourceId существуют
 existing_ids = {p["id"] for p in db["products"]}
 broken = []
 for p in db["products"]:
     for item in p.get("recipe", []):
         if item.get("productId") not in existing_ids:
-            broken.append((p["name"], item["productId"]))
+            broken.append((p["name"], "recipe", item["productId"]))
+    if p.get("sourceId") and p["sourceId"] not in existing_ids:
+        broken.append((p["name"], "sourceId", p["sourceId"]))
 if broken:
-    print("!!! БИТЫЕ ССЫЛКИ в рецептах:", broken)
+    print("!!! БИТЫЕ ССЫЛКИ:", broken)
 else:
-    print("Ссылки в рецептах целые, битых нет.")
+    print("Ссылки в рецептах и sourceId целые, битых нет.")
 
 with open(DB_PATH, "w", encoding="utf-8") as f:
     json.dump(db, f, ensure_ascii=False, indent=2)
