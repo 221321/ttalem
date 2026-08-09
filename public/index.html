@@ -116,7 +116,9 @@ var woItems = [], woQ = '';
 var editRecipe = [];
 var nomPasteOpen = false, nomPasteText = '';
 var stPasteOpen = false, stPasteText = '';
-var agentQ = '', agentSel = null, agentQty = 1, agentPrice = 0, agentClient = '';
+var clPasteOpen = false, clPasteText = '';
+var agentQ = '', agentSel = null, agentQty = 1, agentPrice = 0;
+var agentClientId = null, agentClientQ = '', agentClientsCache = [];
 var agentCash = 0, agentQr = 0, agentFrom = null, agentTo = null;
 var newUserRole = 'agent';
 
@@ -810,6 +812,38 @@ window.salePay=async function(id){
 };
 
 // ====== ТОРГОВЫЙ / ВОДИТЕЛЬ: одна страница ======
+function agentClientBlock(){
+  if(agentClientId){
+    var c=agentClientsCache.find(function(x){ return x.id===agentClientId; });
+    return '<label>Клиент</label><div class="li"><span class="nm">'+esc(c?c.name:'?')+(c&&c.code1c?' <span class="sub">(сверен с 1С)</span>':' <span class="sub">(новый, ещё не сверен с 1С)</span>')+'</span><span class="vl"><button class="btn sec sm" onclick="agentClientId=null;agentClientQ=\'\';renderInPlace()">✕</button></span></div>';
+  }
+  return '<label>Клиент (необязательно)</label>'
+    +'<div class="search"><input id="agClientSearch" placeholder="Найти или добавить клиента..." value="'+esc(agentClientQ)+'" oninput="agentClientSearch(this.value)" autocomplete="off"></div>'
+    +'<div id="agClientList"></div>';
+}
+window.agentClientSearch=function(v){
+  agentClientQ=v;
+  var el=$('#agClientList'); if(!el) return;
+  if(!v){ el.innerHTML=''; return; }
+  var lo=v.toLowerCase();
+  var res=agentClientsCache.filter(function(c){ return c.name.toLowerCase().includes(lo); }).slice(0,10);
+  var exact=agentClientsCache.some(function(c){ return c.name.toLowerCase()===lo.trim(); });
+  var html='<div class="srlist">'+res.map(function(c){ return '<div class="sritem" onclick="agentClientPick(\''+c.id+'\')">'+esc(c.name)+'</div>'; }).join('');
+  if(!exact&&v.trim()) html+='<div class="sritem" style="color:var(--gold)" onclick="agentClientAdd()">➕ Добавить «'+esc(v.trim())+'»</div>';
+  html+='</div>';
+  el.innerHTML=html;
+};
+window.agentClientPick=function(id){ agentClientId=id; agentClientQ=''; renderInPlace(); };
+window.agentClientAdd=async function(){
+  var name=agentClientQ.trim();
+  if(!name) return;
+  try{
+    var c=await api('/clients','POST',{name:name});
+    agentClientsCache.push(c);
+    agentClientId=c.id; agentClientQ='';
+    renderInPlace();
+  }catch(e){ toast(e.message); }
+};
 async function scrAgent(){
   var mySales=await api('/ops?type=sale');
   var todaysSales=mySales.filter(function(o){ return o.ts.slice(0,10)===today(); });
@@ -817,6 +851,7 @@ async function scrAgent(){
   var from=agentFrom||today(), to=agentTo||today();
   var rep=await api('/report/my-sales?from='+from+'&to='+to);
   var dishes=D.products.filter(function(p){ return p.type==='dish'||p.type==='bread'; });
+  agentClientsCache=await api('/clients');
 
   // --- блок: новая продажа ---
   var newSaleBody='';
@@ -830,7 +865,7 @@ async function scrAgent(){
       +'<label>Количество, '+p.unit+'</label><input class="big" id="agQty" type="number" step="0.01" inputmode="decimal" value="'+agentQty+'" oninput="agentCalc()">'
       +'<label>Цена за единицу, ₸</label><input class="big" id="agPrice" type="number" step="1" inputmode="decimal" value="'+(agentPrice||p.salePrice||0)+'" oninput="agentCalc()">'
       +'<div id="agTotal" class="sub" style="text-align:center;margin:10px 0;font-size:16px;font-weight:600"></div>'
-      +'<label>Клиент (необязательно)</label><input id="agClient" type="text" value="'+esc(agentClient)+'" placeholder="Имя/название">'
+      +agentClientBlock()
       +'<div class="row" style="margin-top:8px">'
       +'<div><label>Наличные, ₸</label><input class="big" id="agCash" type="number" step="1" inputmode="decimal" value="'+(agentCash||'')+'" oninput="agentCalc()"></div>'
       +'<div><label>QR / карта, ₸</label><input class="big" id="agQr" type="number" step="1" inputmode="decimal" value="'+(agentQr||'')+'" oninput="agentCalc()"></div>'
@@ -840,7 +875,6 @@ async function scrAgent(){
       +'<button class="btn sec sm" style="margin-top:8px" onclick="agentSel=null;renderInPlace()">← Выбрать другой товар</button>';
   }
   var newSaleCard=card('agnew','<b>🆕 Новая продажа</b>',newSaleBody);
-
   // --- блок: мои продажи сегодня ---
   var todayList=todaysSales.length ? todaysSales.slice().reverse().map(function(s){
     var debtVal=(s.sum!=null&&s.paidAmount!=null)?r2f(s.sum-s.paidAmount):0;
@@ -882,13 +916,12 @@ async function scrAgent(){
 function r2f(x){ return Math.round((+x||0)*100)/100; }
 window.agentSearch=function(v){ agentQ=v; renderInPlace(); };
 window.agentClear=function(){ agentQ=''; renderInPlace(); };
-window.agentPick=function(id){ agentSel=id; agentQty=1; var p=P(id); agentPrice=p.salePrice||0; agentClient=''; agentCash=0; agentQr=0; exp.agnew=true; render(); };
+window.agentPick=function(id){ agentSel=id; agentQty=1; var p=P(id); agentPrice=p.salePrice||0; agentClientId=null; agentClientQ=''; agentCash=0; agentQr=0; exp.agnew=true; render(); };
 window.agentCalc=function(){
   agentQty=+($('#agQty')?$('#agQty').value:1)||0;
   agentPrice=+($('#agPrice')?$('#agPrice').value:0)||0;
   agentCash=+($('#agCash')?$('#agCash').value:0)||0;
   agentQr=+($('#agQr')?$('#agQr').value:0)||0;
-  agentClient=$('#agClient')?$('#agClient').value:'';
   var total=r2f(agentQty*agentPrice);
   var paid=r2f(agentCash+agentQr);
   var debt=Math.max(0,r2f(total-paid));
@@ -898,9 +931,9 @@ window.agentCalc=function(){
 window.agentSave=async function(){
   if(!(agentQty>0)) return toast('Введите количество');
   try{
-    await api('/ops','POST',{type:'sale',productId:agentSel,qty:agentQty,price:agentPrice,client:agentClient,paymentCash:agentCash,paymentQr:agentQr});
+    await api('/ops','POST',{type:'sale',productId:agentSel,qty:agentQty,price:agentPrice,clientId:agentClientId,paymentCash:agentCash,paymentQr:agentQr});
     toast('✅ Продажа оформлена');
-    agentSel=null; agentQty=1; agentPrice=0; agentClient=''; agentCash=0; agentQr=0;
+    agentSel=null; agentQty=1; agentPrice=0; agentClientId=null; agentClientQ=''; agentCash=0; agentQr=0;
     await reload(); render();
   }catch(e){ toast(e.message); }
 };
@@ -1039,6 +1072,7 @@ async function scrSync(){
   var d=syncDate||today();
   var r=await api('/1c/export?date='+d);
   var nd=await api('/1c/nomenclature-diff').catch(function(){ return null; });
+  var cd=await api('/1c/clients-diff').catch(function(){ return null; });
   var sd=await api('/1c/stock-diff').catch(function(){ return null; });
   var S=D.settings||{};
   var settingsHtml='<div class="card"><label>Порог расхождения для уведомлений, %</label>'
@@ -1132,9 +1166,47 @@ async function scrSync(){
   }
   stHtml+='</div>';
 
+  // ---- блок сверки контрагентов (клиентов) ----
+  var clHtml='<div class="card"><b>👤 Сверка контрагентов с 1С</b><p class="sub" style="margin-top:4px">Клиенты, которых заводят торговые/водители прямо на месте — чтобы не плодились дубли в 1С.</p>';
+  if(cd){
+    clHtml+='<p class="sub" style="margin-top:6px">Последняя сверка: '+new Date(cd.ts).toLocaleString('ru-RU')+' · получено позиций: '+cd.totalIncoming+' · совпадает без изменений: '+(cd.matched-cd.matchedDetails.length)+'</p>';
+    if(cd.matchedDetails&&cd.matchedDetails.length){
+      clHtml+='<div class="hl">Отличается наименование ('+cd.matchedDetails.length+')</div>'
+        +'<div class="stocklist">'+cd.matchedDetails.map(function(m){
+          return '<div class="li"><span class="nm">у нас: '+esc(m.ourName)+'<div class="sub">в 1С: '+esc(m.theirName)+' · код '+esc(m.code)+'</div></span></div>';
+        }).join('')+'</div>';
+    }
+    if(cd.newInOneC&&cd.newInOneC.length){
+      clHtml+='<div class="hl">Новые в 1С, нет у нас ('+cd.newInOneC.length+')</div>'
+        +'<div class="stocklist">'+cd.newInOneC.map(function(it){ return '<div class="li"><span class="nm">'+esc(it.name)+'<div class="sub">код '+esc(it.code)+'</div></span></div>'; }).join('')+'</div>';
+    }
+    if(cd.missingInOneC&&cd.missingInOneC.length){
+      clHtml+='<div class="hl">Есть у нас, не пришло из 1С ('+cd.missingInOneC.length+')</div>'
+        +'<div class="stocklist">'+cd.missingInOneC.map(function(it){ return '<div class="li"><span class="nm">'+esc(it.name)+'<div class="sub">код '+esc(it.code1c)+'</div></span></div>'; }).join('')+'</div>';
+    }
+    if((!cd.matchedDetails||!cd.matchedDetails.length)&&(!cd.newInOneC||!cd.newInOneC.length)&&(!cd.missingInOneC||!cd.missingInOneC.length)){
+      clHtml+='<p class="sub" style="margin-top:8px">Расхождений нет.</p>';
+    }
+    if((cd.newInOneC&&cd.newInOneC.length)||(cd.matchedDetails&&cd.matchedDetails.length)){
+      clHtml+='<div style="height:8px"></div>'
+        +'<label><input type="checkbox" id="clCreateMissing" style="width:auto;display:inline-block;margin-right:6px">создавать новых клиентов из 1С автоматически</label>'
+        +'<div style="height:6px"></div><button class="btn grn" onclick="clientsApply()">Применить сверку</button>';
+    }
+  } else {
+    clHtml+='<p class="sub" style="margin-top:6px">Сверки ещё не было — либо 1С ещё не присылала контрагентов, либо проверьте вручную ниже.</p>';
+  }
+  clHtml+='<div style="height:8px"></div><button class="btn sec sm" onclick="clPasteOpen=!clPasteOpen;renderInPlace()">'+(clPasteOpen?'Скрыть ручную проверку':'Проверить вручную (вставить JSON)')+'</button>';
+  if(clPasteOpen){
+    clHtml+='<div style="height:8px"></div><label>JSON вида {"items":[{"code":"K-00001","name":"Иванов Александр"}]}</label>'
+      +'<textarea id="clPasteArea" rows="6" style="width:100%;padding:10px;border:1px solid var(--line);border-radius:10px;font-family:monospace;font-size:12px">'+esc(clPasteText)+'</textarea>'
+      +'<div style="height:8px"></div><button class="btn sec" onclick="clCheckPaste()">Проверить</button>';
+  }
+  clHtml+='</div>';
+
   return '<h2>Обмен с 1С</h2>'
     +nomHtml
     +stHtml
+    +clHtml
     +'<div class="card"><label>Дата выгрузки</label>'
     +'<input type="date" value="'+d+'" onchange="syncDate=this.value;render()">'
     +'<div style="height:8px"></div>'
@@ -1207,6 +1279,30 @@ window.stApply=async function(){
     if(!items.length) return toast('Нет расхождений для применения');
     var r=await api('/1c/stock-apply','POST',{items:items});
     toast('✅ Применено: '+r.applied); await reload(); render();
+  }catch(e){ toast(e.message); }
+};
+window.clCheckPaste=async function(){
+  clPasteText=$('#clPasteArea').value;
+  var parsed;
+  try{ parsed=JSON.parse(clPasteText); }
+  catch(e){ return toast('Это не валидный JSON'); }
+  var items=Array.isArray(parsed)?parsed:parsed.items;
+  if(!Array.isArray(items)) return toast('Ожидается {"items":[...]} или массив');
+  try{
+    await api('/1c/clients-diff','POST',{items:items});
+    toast('✅ Сверка выполнена'); clPasteOpen=false; renderInPlace();
+  }catch(e){ toast(e.message); }
+};
+window.clientsApply=async function(){
+  var createMissing=$('#clCreateMissing')&&$('#clCreateMissing').checked;
+  if(!confirm(createMissing?'Обновить совпавшие имена и создать новых клиентов из 1С?':'Обновить только совпавшие имена? (новые клиенты не будут созданы)')) return;
+  try{
+    var cd=await api('/1c/clients-diff');
+    if(!cd) return toast('Нет данных сверки');
+    var items=(cd.matchedDetails||[]).map(function(m){ return {code:m.code,name:m.theirName}; })
+      .concat((cd.newInOneC||[]).map(function(it){ return {code:it.code,name:it.name}; }));
+    var r=await api('/1c/clients-apply','POST',{items:items,createMissing:createMissing});
+    toast('✅ Обновлено: '+r.updated+', создано: '+r.created+', связано по имени: '+r.linked); await reload(); render();
   }catch(e){ toast(e.message); }
 };
 
