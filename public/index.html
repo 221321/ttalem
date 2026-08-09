@@ -807,7 +807,7 @@ async function scrSales(){
   }
 
   // --- форма продажи: кол-во и цена в один ряд, клиент — поиск/привязка к справочнику ---
-  agentClientsCache = agentClientsCache.length ? agentClientsCache : await api('/clients').catch(function(){ return []; });
+  agentClientsCache = await api('/clients').catch(function(){ return agentClientsCache; });
   var formHtml='<div class="card"><b>Оформить продажу</b>'
     +'<label>Блюдо</label><select id="saP" onchange="salePriceInput=D.products.find(function(p){return p.id===this.value}).salePrice||0;renderInPlace()">'+dishOpts+'</select>'
     +'<div class="row">'
@@ -867,17 +867,17 @@ function agentClientBlock(){
     return '<label>Клиент</label><div class="li"><span class="nm">'+esc(c?c.name:'?')+(c&&c.code1c?' <span class="sub">(сверен с 1С)</span>':' <span class="sub">(новый, ещё не сверен с 1С)</span>')+'</span><span class="vl"><button class="btn sec sm" onclick="agentClientId=null;agentClientQ=\'\';renderInPlace()">✕</button></span></div>';
   }
   return '<label>Клиент (необязательно)</label>'
-    +'<div class="search"><input id="agClientSearch" placeholder="Найти или добавить клиента..." value="'+esc(agentClientQ)+'" oninput="agentClientSearch(this.value)" autocomplete="off"></div>'
+    +'<div class="search"><input id="agClientSearch" placeholder="Найти или добавить клиента..." value="'+esc(agentClientQ)+'" oninput="agentClientSearch(this.value)" onfocus="agentClientSearch(this.value)" autocomplete="off"></div>'
     +'<div id="agClientList"></div>';
 }
 window.agentClientSearch=function(v){
   agentClientQ=v;
   var el=$('#agClientList'); if(!el) return;
-  if(!v){ el.innerHTML=''; return; }
   var lo=v.toLowerCase();
-  var res=agentClientsCache.filter(function(c){ return c.name.toLowerCase().includes(lo); }).slice(0,10);
+  var res=(v?agentClientsCache.filter(function(c){ return c.name.toLowerCase().includes(lo); }):agentClientsCache.slice().sort(function(a,b){ return a.name.localeCompare(b.name,'ru'); })).slice(0,15);
   var exact=agentClientsCache.some(function(c){ return c.name.toLowerCase()===lo.trim(); });
-  var html='<div class="srlist">'+res.map(function(c){ return '<div class="sritem" onclick="agentClientPick(\''+c.id+'\')">'+esc(c.name)+'</div>'; }).join('');
+  if(!res.length&&!v){ el.innerHTML='<div class="srlist"><div class="sritem sub">Клиентов пока нет — начните печатать, чтобы добавить.</div></div>'; return; }
+  var html='<div class="srlist">'+res.map(function(c){ return '<div class="sritem" onclick="agentClientPick(\''+c.id+'\')">'+esc(c.name)+(c.code1c?' <span class="sub">· сверен с 1С</span>':'')+'</div>'; }).join('');
   if(!exact&&v.trim()) html+='<div class="sritem" style="color:var(--gold)" onclick="agentClientAdd()">➕ Добавить «'+esc(v.trim())+'»</div>';
   html+='</div>';
   el.innerHTML=html;
