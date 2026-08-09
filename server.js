@@ -119,6 +119,10 @@ const isAgent = role => role === 'agent';
   if (!Array.isArray(db.alerts)) { db.alerts = []; changed = true; }
   if (!Array.isArray(db.orders)) { db.orders = []; changed = true; }
 
+  // справочник контрагентов (клиентов) — раньше client был просто текстом на продаже,
+  // из-за чего в 1С плодились дубли контрагентов по каждой опечатке в имени
+  if (!Array.isArray(db.clients)) { db.clients = []; changed = true; }
+
   // Чиним sourceId: продукт не может быть выработкой из самого себя
   db.products.forEach(p => {
     if (p.sourceId === p.id) { p.sourceId = null; changed = true; }
@@ -394,9 +398,18 @@ function opSale(o) {
   const paymentDebt = r2(Math.max(0, sum - paidAmount));
   const paid = paidAmount >= sum - 0.001;
 
+  // клиент: либо ссылка на справочник db.clients (clientId — предпочтительно, даёт code1c для 1С),
+  // либо просто текст по старинке (тогда 1С будет искать/создавать контрагента по имени)
+  let clientName = (o.client || '').trim();
+  let clientId = o.clientId || null;
+  if (clientId) {
+    const c = db.clients.find(x => x.id === clientId);
+    if (c) clientName = c.name; else clientId = null;
+  }
+
   return {
     type: 'sale', productId: o.productId, skladId: skId, qty: o.qty, price, sum, costSum,
-    profit: r2(sum - costSum), client: (o.client || '').trim(),
+    profit: r2(sum - costSum), client: clientName, clientId,
     paymentCash, paymentQr, paymentDebt, paid, paidAmount
   };
 }
@@ -667,11 +680,14 @@ function export1c(date) {
   dayOps.filter(o => o.type === 'sale').forEach(o => {
     const p = product(o.productId);
     const sk = sklad(o.skladId);
+    const cl = o.clientId ? db.clients.find(c => c.id === o.clientId) : null;
     docs.push({
       Ид: 'sale|' + o.id,
       ВидДокумента: 'РеализацияТМЗ', Дата: date, Время: t(),
       Комментарий: 'SKY MEAL: продажа ' + p.name + (o.client ? ' — ' + o.client : ''),
       Клиент: o.client || '',
+      КлиентИд: o.clientId || '',        // внутренний id клиента SkyMeal — вернуть через clients-resolve
+      КлиентКод1С: cl ? (cl.code1c || '') : '', // если уже сматчен раньше — 1С ищет контрагента сразу по коду, без создания дублей
       Оплачено: !!o.paid,
       Склад: sk ? sk.name : o.skladId,
       Товары: [{ Наименование: p.name, Код: p.code1c || '', Количество: o.qty, Цена: o.price, Сумма: o.sum }]
@@ -774,6 +790,20 @@ function route(req, res, u, data) {
     rec.paymentCash = r2(Math.max(rec.paymentCash || 0, rec.paidAmount - (rec.paymentQr || 0)));
     save();
     return json(res, 200, { id: rec.id, paidAmount: rec.paidAmount, paid: rec.paid });
+  }
+
+  // ---------- реалтайм: 1С сообщает, каким кодом контрагента она сматчила/создала клиента при проведении продажи —
+  // без этого шага повторные продажи тому же клиенту снова уходили бы в 1С без кода и создавали дубль ----------
+  if (p === '/api/1c/clients-resolve' && req.method === 'POST') {
+    if (data.secret !== SYNC_SECRET) return json(res, 403, { error: 'Нет доступа' });
+    const clientId = String(data.clientId || '');
+    const code1c = String(data.code1c || '').trim();
+    if (!clientId || !code1c) return json(res, 400, { error: 'Нужны clientId и code1c' });
+    const c = db.clients.find(x => x.id === clientId);
+    if (!c) return json(res, 404, { error: 'Клиент не найден: ' + clientId });
+    c.code1c = code1c;
+    save();
+    return json(res, 200, { id: c.id, code1c: c.code1c });
   }
 
   const user = auth(req);
@@ -1277,6 +1307,83 @@ if (p === '/api/ops' && req.method === 'GET') {
     db.lastNomenclatureDiff = null;
     save();
     return json(res, 200, { updated, created });
+  }
+
+  // ---------- клиенты (контрагенты): справочник + сверка с 1С, по тому же принципу что и номенклатура ----------
+  if (p === '/api/clients' && req.method === 'GET') {
+    if (isCook(role)) return json(res, 403, { error: 'Нет прав' });
+    return json(res, 200, db.clients);
+  }
+  if (p === '/api/clients' && req.method === 'POST') {
+    if (isCook(role)) return json(res, 403, { error: 'Нет прав' });
+    const name = String(data.name || '').trim();
+    if (!name) return json(res, 400, { error: 'Введите имя клиента' });
+    // не плодим дубли и на своей стороне — если такое имя уже есть, отдаём существующего
+    const existing = db.clients.find(c => c.name.toLowerCase() === name.toLowerCase());
+    if (existing) return json(res, 200, existing);
+    const nc = { id: nid('cl'), name, code1c: '' };
+    db.clients.push(nc); save();
+    return json(res, 200, nc);
+  }
+
+  if (p === '/api/1c/clients-diff' && req.method === 'POST') {
+    if (!isAdmin) return json(res, 403, { error: 'Только директор' });
+    const incoming = data.items || [];
+    const byCode = {};
+    db.clients.forEach(c => { if (c.code1c) byCode[c.code1c] = c; });
+    const matched = [];
+    const newInOneC = [];
+    const missingInOneC = [];
+    const seenCodes = new Set();
+    incoming.forEach(item => {
+      seenCodes.add(item.code);
+      const existing = byCode[item.code];
+      if (existing) {
+        matched.push({ clientId: existing.id, ourName: existing.name, theirName: item.name, code: item.code, nameChanged: existing.name !== item.name });
+      } else {
+        newInOneC.push(item);
+      }
+    });
+    db.clients.forEach(c => {
+      if (c.code1c && !seenCodes.has(c.code1c)) {
+        missingInOneC.push({ clientId: c.id, name: c.name, code1c: c.code1c });
+      }
+    });
+    const result = { matched: matched.length, matchedDetails: matched.filter(m => m.nameChanged), newInOneC, missingInOneC };
+    db.lastClientsDiff = Object.assign({ ts: new Date().toISOString(), totalIncoming: incoming.length }, result);
+    save();
+    return json(res, 200, result);
+  }
+  if (p === '/api/1c/clients-diff' && req.method === 'GET') {
+    if (!isAdmin) return json(res, 403, { error: 'Только директор' });
+    return json(res, 200, db.lastClientsDiff || null);
+  }
+  if (p === '/api/1c/clients-apply' && req.method === 'POST') {
+    if (!isAdmin) return json(res, 403, { error: 'Только директор' });
+    const incoming = data.items || [];
+    const byCode = {};
+    db.clients.forEach(c => { if (c.code1c) byCode[c.code1c] = c; });
+    // также сматчим оставшиеся клиенты без code1c по точному имени — типичный случай:
+    // клиента завёл агент на сайте текстом, а в 1С он уже был создан раньше под тем же именем
+    const byNameNoCode = {};
+    db.clients.forEach(c => { if (!c.code1c) byNameNoCode[c.name.toLowerCase()] = c; });
+    let updated = 0, created = 0, linked = 0;
+    incoming.forEach(item => {
+      const existing = byCode[item.code];
+      if (existing) {
+        if (existing.name !== item.name) { existing.name = item.name; updated++; }
+        return;
+      }
+      const byName = byNameNoCode[String(item.name || '').trim().toLowerCase()];
+      if (byName) { byName.code1c = item.code; linked++; return; }
+      if (data.createMissing) {
+        db.clients.push({ id: nid('cl'), name: item.name, code1c: item.code });
+        created++;
+      }
+    });
+    db.lastClientsDiff = null;
+    save();
+    return json(res, 200, { updated, created, linked });
   }
 
   json(res, 404, { error: 'not found' });
