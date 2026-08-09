@@ -694,7 +694,25 @@ function buildReportDebts() {
       if (c && c.code1c && debts1c.byCode[c.code1c]) debt1c = debts1c.byCode[c.code1c].balance;
     }
     return Object.assign(x, { debt1c, diff: debt1c != null ? money2(x.debt - debt1c) : null });
-  }).sort((a, b) => b.debt - a.debt);
+  });
+  // клиенты, по которым 1С прислала реальный долг, но на сайте долга нет вообще (продажа отмечена
+  // оплаченной, а по бухгалтерии реально не оплачена, или оплата шла мимо сайта) — иначе расхождение
+  // молча терялось: отчёт брал клиентов только из тех, у кого есть неоплаченная продажа на сайте.
+  if (debts1c) {
+    const seenClientIds = new Set(rows.map(x => x.clientId).filter(Boolean));
+    Object.keys(debts1c.byCode).forEach(code => {
+      const c = db.clients.find(cl => cl.code1c === code);
+      if (c && seenClientIds.has(c.id)) return; // уже учтён выше
+      const balance = debts1c.byCode[code].balance;
+      if (Math.abs(balance) < 0.01) return;
+      rows.push({
+        client: (c ? c.name : debts1c.byCode[code].name) + ' (нет долга на сайте)',
+        clientId: c ? c.id : null, debt: 0, count: 0, lastTs: debts1c.ts,
+        debt1c: balance, diff: money2(0 - balance)
+      });
+    });
+  }
+  rows.sort((a, b) => b.debt - a.debt);
   const note = debts1c ? 'Долг по 1С сверен: ' + new Date(debts1c.ts).toLocaleString('ru-RU') : 'Долг по 1С ещё не синхронизирован — нажмите в 1С «Отправить долги контрагентов»';
   return {
     title: 'Долги по клиентам (текущие, за всё время)',
