@@ -835,6 +835,7 @@ async function scrSales(){
           +(s.paid?'<span class="pill ok">оплачено</span>':'<span class="pill bad">долг '+money(s.debt)+'</span>'
             +'<div style="height:6px"></div><input class="big" id="pay'+s.id+'" type="number" step="1" placeholder="Сумма оплаты" style="margin-bottom:6px">'
             +'<button class="btn sec sm" onclick="event.stopPropagation();salePay(\''+s.id+'\')">Погасить</button>')
+          +'<div style="height:8px"></div><button class="btn sec sm" style="color:var(--red);border-color:var(--red)" onclick="event.stopPropagation();saleCancel(\''+s.id+'\')">Отменить продажу</button>'
       );
     });
   }
@@ -850,6 +851,18 @@ window.saleSave=async function(){
   try{
     await api('/ops','POST',payload);
     toast('✅ Продажа оформлена'); saleQty=''; agentClientId=null; agentClientQ=''; await reload(); render();
+  }catch(e){ toast(e.message); }
+};
+window.saleCancel=async function(id){
+  if(!confirm('Отменить продажу? Товар вернётся на склад, из выручки и кассы она пропадёт. Действие необратимо (кроме как оформить продажу заново).')) return;
+  try{
+    var r=await api('/sales/'+id+'/cancel','POST',{});
+    if(r.already1c&&r.already1c.status==='created'){
+      toast('⚠️ Отменено. Но в 1С уже создан документ №'+(r.already1c.docNumber||'')+' — аннулируйте его там вручную!');
+    } else {
+      toast('✅ Продажа отменена, товар вернулся на склад');
+    }
+    await reload(); render();
   }catch(e){ toast(e.message); }
 };
 window.salePay=async function(id){
