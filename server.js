@@ -1327,6 +1327,43 @@ if (p === '/api/ops' && req.method === 'GET') {
     return json(res, 200, db.lastStockDiff || null);
   }
 
+  // ---------- сверка реализации: 1С присылает {items:[{ref, docNumber, posted}]} по всем документам
+  // РеализацияТоваровУслуг с заполненным ИдSkyMeal — сравниваем с тем, что должно быть по продажам/накладным.
+  // Заодно самовосстанавливаем docStatus, если он завис "не подтверждено" (например, сайт был недоступен
+  // в момент, когда 1С отправляла doc-status при создании) ----------
+  if (p === '/api/1c/sales-diff' && req.method === 'POST') {
+    if (!isAdmin) return json(res, 403, { error: 'Только директор' });
+    const incoming = data.items || [];
+    const byRef = {};
+    incoming.forEach(item => { if (item.ref) byRef[item.ref] = item; });
+    const seenRefs = new Set();
+    const matched = [];
+    const notPosted = [];
+    db.operations.filter(o => o.type === 'sale' || o.type === 'waybill').forEach(o => {
+      const ref = o.type + '|' + o.id;
+      const inc = byRef[ref];
+      if (!inc) return; // разберём отдельно ниже как missingIn1c
+      seenRefs.add(ref);
+      db.docStatus[ref] = { status: 'created', docNumber: inc.docNumber || '', message: '', ts: new Date().toISOString() };
+      const row = { ref, docNumber: inc.docNumber || '', sum: o.sum, client: o.client || '', ts: o.ts };
+      if (inc.posted === false) notPosted.push(row); else matched.push(row);
+    });
+    const missingIn1c = [];
+    db.operations.filter(o => o.type === 'sale' || o.type === 'waybill').forEach(o => {
+      const ref = o.type + '|' + o.id;
+      if (!byRef[ref]) missingIn1c.push({ ref, sum: o.sum, client: o.client || '', ts: o.ts, docStatus: db.docStatus[ref] || null });
+    });
+    const notInSkyMeal = incoming.filter(item => !seenRefs.has(item.ref) && !db.operations.some(o => (o.type + '|' + o.id) === item.ref));
+    const result = { matched: matched.length, notPosted, missingIn1c, notInSkyMeal };
+    db.lastSalesDiff = Object.assign({ ts: new Date().toISOString(), totalIncoming: incoming.length }, result);
+    save();
+    return json(res, 200, result);
+  }
+  if (p === '/api/1c/sales-diff' && req.method === 'GET') {
+    if (!isAdmin) return json(res, 403, { error: 'Только директор' });
+    return json(res, 200, db.lastSalesDiff || null);
+  }
+
   // ---------- применение сверки остатков: подтягиваем факт из 1С на основной склад (is1cMain) ----------
   if (p === '/api/1c/stock-apply' && req.method === 'POST') {
     if (!isAdmin) return json(res, 403, { error: 'Только директор' });
