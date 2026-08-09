@@ -123,6 +123,9 @@ const isAgent = role => role === 'agent';
   // из-за чего в 1С плодились дубли контрагентов по каждой опечатке в имени
   if (!Array.isArray(db.clients)) { db.clients = []; changed = true; }
 
+  // сдачи наличности агентами/водителями (инкассация) — сколько и когда сдали
+  if (!Array.isArray(db.cashHandovers)) { db.cashHandovers = []; changed = true; }
+
   // Чиним sourceId: продукт не может быть выработкой из самого себя
   db.products.forEach(p => {
     if (p.sourceId === p.id) { p.sourceId = null; changed = true; }
@@ -681,6 +684,7 @@ function export1c(date) {
     const p = product(o.productId);
     const sk = sklad(o.skladId);
     const cl = o.clientId ? db.clients.find(c => c.id === o.clientId) : null;
+    const seller = db.users.find(u => u.id === o.userId);
     docs.push({
       Ид: 'sale|' + o.id,
       ВидДокумента: 'РеализацияТМЗ', Дата: date, Время: t(),
@@ -689,6 +693,10 @@ function export1c(date) {
       КлиентИд: o.clientId || '',        // внутренний id клиента SkyMeal — вернуть через clients-resolve
       КлиентКод1С: cl ? (cl.code1c || '') : '', // если уже сматчен раньше — 1С ищет контрагента сразу по коду, без создания дублей
       Оплачено: !!o.paid,
+      ОплаченоНал: o.paymentCash || 0,   // сколько именно наличными — для разноски по кассе
+      ОплаченоQR: o.paymentQr || 0,      // сколько именно QR/картой — для разноски по эквайрингу
+      Долг: o.paymentDebt || 0,
+      Продавец: seller ? seller.name : '',
       Склад: sk ? sk.name : o.skladId,
       Товары: [{ Наименование: p.name, Код: p.code1c || '', Количество: o.qty, Цена: o.price, Сумма: o.sum }]
     });
@@ -1066,6 +1074,46 @@ if (p === '/api/ops' && req.method === 'GET') {
     }, { revenue: 0, cash: 0, qr: 0, debt: 0, count: 0 });
     return json(res, 200, { from, to, totals });
   }
+
+  // ---------- нал на руках у агента + сдача выручки (инкассация) ----------
+  function cashOnHand(userId) {
+    const collected = db.operations
+      .filter(o => o.type === 'sale' && o.userId === userId)
+      .reduce((a, o) => a + (o.paymentCash || 0), 0);
+    const handed = db.cashHandovers
+      .filter(h => h.userId === userId)
+      .reduce((a, h) => a + h.amount, 0);
+    return r2(collected - handed);
+  }
+  if (p === '/api/cash/status' && req.method === 'GET') {
+    if (isCook(role)) return json(res, 403, { error: 'Нет прав' });
+    if (isAgent(role)) {
+      return json(res, 200, { onHand: cashOnHand(user.id), history: db.cashHandovers.filter(h => h.userId === user.id).slice(-20).reverse() });
+    }
+    // директор/менеджер — сводка по всем, у кого есть продажи с наличными
+    if (!isAdmin && role !== 'tech') return json(res, 403, { error: 'Нет прав' });
+    const sellerIds = new Set(db.operations.filter(o => o.type === 'sale' && (o.paymentCash || 0) > 0).map(o => o.userId));
+    const rows = Array.from(sellerIds).map(uid => {
+      const u2 = db.users.find(x => x.id === uid);
+      return { userId: uid, name: u2 ? u2.name : '?', onHand: cashOnHand(uid) };
+    }).filter(r => Math.abs(r.onHand) > 0.01);
+    return json(res, 200, { rows, history: db.cashHandovers.slice(-50).reverse() });
+  }
+  if (p === '/api/cash/handover' && req.method === 'POST') {
+    if (isCook(role)) return json(res, 403, { error: 'Нет прав' });
+    // агент сдаёт свою наличность; директор/менеджер может зафиксировать сдачу от чужого имени (userId в теле)
+    const targetUserId = (isAdmin || role === 'tech') && data.userId ? data.userId : user.id;
+    if (isAgent(role) && targetUserId !== user.id) return json(res, 403, { error: 'Можно сдавать только свою наличность' });
+    const amount = r2(+data.amount || 0);
+    if (!(amount > 0)) return json(res, 400, { error: 'Сумма должна быть больше нуля' });
+    const onHand = cashOnHand(targetUserId);
+    if (amount > onHand + 0.01) return json(res, 400, { error: 'На руках всего ' + onHand + ' ₸ — нельзя сдать больше' });
+    const rec = { id: nid('ch'), userId: targetUserId, amount, note: (data.note || '').trim(), ts: new Date().toISOString(), by: user.name };
+    db.cashHandovers.push(rec);
+    save();
+    return json(res, 200, { onHand: cashOnHand(targetUserId), record: rec });
+  }
+
   if (p === '/api/report/output') {
     // все роли включая повара
     return json(res, 200, reportOutput(u.searchParams.get('from'), u.searchParams.get('to'), !isAdmin));
