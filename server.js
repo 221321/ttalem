@@ -474,7 +474,7 @@ const OPS = { receipt: opReceipt, processing: opProcessing, production: opProduc
 // ---------- отчёты ----------
 // ---------- отчёт по реализации: выручка, себестоимость, прибыль, долги ----------
 function reportSales(from, to) {
-  let ops = db.operations.filter(o => o.type === 'sale');
+  let ops = db.operations.filter(o => o.type === 'sale' && !o.cancelled);
   if (from) ops = ops.filter(o => o.ts.slice(0, 10) >= from);
   if (to) ops = ops.filter(o => o.ts.slice(0, 10) <= to);
 
@@ -733,7 +733,7 @@ function export1c(date) {
   });
 
   // реализация (продажи клиентам)
-  dayOps.filter(o => o.type === 'sale').forEach(o => {
+  dayOps.filter(o => o.type === 'sale' && !o.cancelled).forEach(o => {
     const p = product(o.productId);
     const sk = sklad(o.skladId);
     const cl = o.clientId ? db.clients.find(c => c.id === o.clientId) : null;
@@ -1078,11 +1078,40 @@ function route(req, res, u, data) {
     }
     return json(res, 200, out);
   }
+  // ---------- отмена продажи/накладной: возвращает товар на склад, убирает из выручки/кассы/сверок с 1С.
+  // Не удаляет запись — помечает cancelled, чтобы осталась в истории и не потерялся id для дедупа. ----------
+  const mSaleCancel = p.match(/^\/api\/sales\/([^/]+)\/cancel$/);
+  if (mSaleCancel && req.method === 'POST') {
+    if (!isAdmin && role !== 'tech') return json(res, 403, { error: 'Отменить продажу может только директор/менеджер' });
+    const rec = db.operations.find(o => o.id === mSaleCancel[1] && (o.type === 'sale' || o.type === 'waybill'));
+    if (!rec) return json(res, 404, { error: 'Продажа не найдена' });
+    if (rec.cancelled) return json(res, 400, { error: 'Уже отменена' });
+    // вернуть товар на склад
+    if (rec.type === 'sale') {
+      const s = stockOf(rec.productId, rec.skladId);
+      s.qty = r2(s.qty + rec.qty);
+      s.value = r2(s.value + rec.costSum);
+    } else if (rec.type === 'waybill' && Array.isArray(rec.items)) {
+      rec.items.forEach(it => {
+        const s = stockOf(it.productId, it.skladId);
+        s.qty = r2(s.qty + it.qty);
+        s.value = r2(s.value + it.costSum);
+      });
+    }
+    rec.cancelled = true;
+    rec.cancelledAt = new Date().toISOString();
+    rec.cancelledBy = user.id;
+    const ref = rec.type + '|' + rec.id;
+    const already1c = db.docStatus[ref];
+    save();
+    return json(res, 200, { id: rec.id, cancelled: true, already1c: already1c || null });
+  }
   const mSalePay = p.match(/^\/api\/sales\/([^/]+)\/pay$/);
   if (mSalePay && req.method === 'POST') {
     if (isCook(role)) return json(res, 403, { error: 'Нет прав' });
     const rec = db.operations.find(o => o.id === mSalePay[1] && o.type === 'sale');
     if (!rec) return json(res, 404, { error: 'Продажа не найдена' });
+    if (rec.cancelled) return json(res, 400, { error: 'Продажа отменена' });
     if (isAgent(role) && rec.userId !== user.id) return json(res, 403, { error: 'Можно отмечать оплату только по своим продажам' });
     const add = r2(+data.amount || 0);
     if (!(add > 0)) return json(res, 400, { error: 'Сумма должна быть больше нуля' });
@@ -1171,7 +1200,7 @@ if (p === '/api/ops' && req.method === 'GET') {
   if (p === '/api/report/my-sales') {
     const from = u.searchParams.get('from') || today();
     const to = u.searchParams.get('to') || today();
-    const mine = db.operations.filter(o => o.type === 'sale' && o.userId === user.id && o.ts.slice(0, 10) >= from && o.ts.slice(0, 10) <= to);
+    const mine = db.operations.filter(o => o.type === 'sale' && !o.cancelled && o.userId === user.id && o.ts.slice(0, 10) >= from && o.ts.slice(0, 10) <= to);
     const totals = mine.reduce((a, o) => {
       a.revenue = r2(a.revenue + (o.sum || 0));
       a.cash = r2(a.cash + (o.paymentCash || 0));
@@ -1186,7 +1215,7 @@ if (p === '/api/ops' && req.method === 'GET') {
   // ---------- нал на руках у агента + сдача выручки (инкассация) ----------
   function cashOnHand(userId) {
     const collected = db.operations
-      .filter(o => o.type === 'sale' && o.userId === userId)
+      .filter(o => o.type === 'sale' && !o.cancelled && o.userId === userId)
       .reduce((a, o) => a + (o.paymentCash || 0), 0);
     const handed = db.cashHandovers
       .filter(h => h.userId === userId)
@@ -1200,7 +1229,7 @@ if (p === '/api/ops' && req.method === 'GET') {
     }
     // директор/менеджер — сводка по всем, у кого есть продажи с наличными
     if (!isAdmin && role !== 'tech') return json(res, 403, { error: 'Нет прав' });
-    const sellerIds = new Set(db.operations.filter(o => o.type === 'sale' && (o.paymentCash || 0) > 0).map(o => o.userId));
+    const sellerIds = new Set(db.operations.filter(o => o.type === 'sale' && !o.cancelled && (o.paymentCash || 0) > 0).map(o => o.userId));
     const rows = Array.from(sellerIds).map(uid => {
       const u2 = db.users.find(x => x.id === uid);
       return { userId: uid, name: u2 ? u2.name : '?', onHand: cashOnHand(uid) };
@@ -1349,7 +1378,7 @@ if (p === '/api/ops' && req.method === 'GET') {
       if (inc.posted === false) notPosted.push(row); else matched.push(row);
     });
     const missingIn1c = [];
-    db.operations.filter(o => o.type === 'sale' || o.type === 'waybill').forEach(o => {
+    db.operations.filter(o => (o.type === 'sale' || o.type === 'waybill') && !o.cancelled).forEach(o => {
       const ref = o.type + '|' + o.id;
       if (!byRef[ref]) missingIn1c.push({ ref, sum: o.sum, client: o.client || '', ts: o.ts, docStatus: db.docStatus[ref] || null });
     });
