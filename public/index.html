@@ -767,7 +767,7 @@ async function scrOutput(){
 window.outSet=function(days){ var d=new Date(); outTo=d.toISOString().slice(0,10); d.setDate(d.getDate()-days); outFrom=d.toISOString().slice(0,10); render(); };
 
 // ====== Продажи (реализация) ======
-var saleFrom = null, saleTo = null, saleQty = '', salePriceInput = '', saleClient = '', salePeriod = 0;
+var saleFrom = null, saleTo = null, saleQty = '', salePriceInput = '', salePeriod = 0;
 async function scrSales(){
   var from=saleFrom||today(), to=saleTo||today();
   var dishes=D.products.filter(function(p){ return p.type==='dish'; });
@@ -806,17 +806,16 @@ async function scrSales(){
       +'</div>';
   }
 
-  // --- форма продажи: кол-во и цена в один ряд ---
+  // --- форма продажи: кол-во и цена в один ряд, клиент — поиск/привязка к справочнику ---
+  agentClientsCache = agentClientsCache.length ? agentClientsCache : await api('/clients').catch(function(){ return []; });
   var formHtml='<div class="card"><b>Оформить продажу</b>'
     +'<label>Блюдо</label><select id="saP" onchange="salePriceInput=D.products.find(function(p){return p.id===this.value}).salePrice||0;renderInPlace()">'+dishOpts+'</select>'
     +'<div class="row">'
       +'<div><label>Количество</label><input class="big" id="saQ" type="number" min="1" step="1" inputmode="numeric" value="'+saleQty+'" onfocus="this.select()"></div>'
       +'<div><label>Цена, ₸</label><input class="big" id="saPrice" type="number" step="1" inputmode="decimal" value="'+salePriceInput+'"></div>'
     +'</div>'
-    +'<div class="row" style="align-items:end;margin-top:10px">'
-      +'<div><label style="margin-top:0">Клиент (необязательно)</label><input id="saClient" type="text" value="'+esc(saleClient)+'" placeholder="Имя/название"></div>'
-      +'<div style="flex:0 0 auto"><label style="display:flex;align-items:center;gap:6px;white-space:nowrap;margin:0;padding:12px 4px"><input type="checkbox" id="saPaid" checked style="width:auto"> Оплачено</label></div>'
-    +'</div>'
+    +agentClientBlock()
+    +'<div style="height:4px"></div><label style="display:flex;align-items:center;gap:6px;margin:10px 0 0"><input type="checkbox" id="saPaid" checked style="width:auto"> Оплачено</label>'
     +'<div style="height:10px"></div><button class="btn" onclick="saleSave()">Продать</button></div>';
 
   // --- список продаж, сгруппированный по датам при периоде >1 дня ---
@@ -843,11 +842,14 @@ async function scrSales(){
 }
 window.saleSet=function(days){ salePeriod=days; var d=new Date(); saleTo=d.toISOString().slice(0,10); d.setDate(d.getDate()-days); saleFrom=d.toISOString().slice(0,10); render(); };
 window.saleSave=async function(){
-  var pid=$('#saP').value, qty=+$('#saQ').value, price=$('#saPrice').value, client=$('#saClient').value, paid=$('#saPaid').checked;
+  var pid=$('#saP').value, qty=+$('#saQ').value, price=$('#saPrice').value, paid=$('#saPaid').checked;
   if(!(qty>0)) return toast('Введите количество');
+  var payload={type:'sale',productId:pid,qty:qty,price:price,paid:paid};
+  if(agentClientId){ payload.clientId=agentClientId; }
+  else if(agentClientQ&&agentClientQ.trim()){ payload.client=agentClientQ.trim(); } // ввёл текст, но не выбрал/не добавил из списка — уходит как раньше, просто текстом
   try{
-    await api('/ops','POST',{type:'sale',productId:pid,qty:qty,price:price,client:client,paid:paid});
-    toast('✅ Продажа оформлена'); saleQty=''; saleClient=''; await reload(); render();
+    await api('/ops','POST',payload);
+    toast('✅ Продажа оформлена'); saleQty=''; agentClientId=null; agentClientQ=''; await reload(); render();
   }catch(e){ toast(e.message); }
 };
 window.salePay=async function(id){
