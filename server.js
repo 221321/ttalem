@@ -484,7 +484,7 @@ function reportSales(from, to) {
     return {
       id: o.id, ts: o.ts, name: p ? p.name : '?', unit: p ? p.unit : '',
       qty: o.qty, price: o.price, sum: o.sum, costSum: o.costSum, profit: o.profit,
-      client: o.client, paid: o.paid, paidAmount: o.paidAmount, debt: r2((o.sum || 0) - (o.paidAmount || 0)),
+      client: o.client, clientId: o.clientId || null, paid: o.paid, paidAmount: o.paidAmount, debt: r2((o.sum || 0) - (o.paidAmount || 0)),
       paymentCash: o.paymentCash || 0, paymentQr: o.paymentQr || 0,
       sellerId: o.userId, sellerName: seller ? seller.name : '?', source: o.source || 'сайт'
     };
@@ -680,19 +680,28 @@ function buildReportDebts() {
   const r = reportSales(null, null); // долги считаем за всё время, не за период
   const byClient = {};
   r.debts.forEach(d => {
-    const key = d.client || '(без клиента)';
-    if (!byClient[key]) byClient[key] = { client: key, debt: 0, count: 0, lastTs: d.ts };
+    const key = d.clientId || ('name:' + (d.client || '(без клиента)'));
+    if (!byClient[key]) byClient[key] = { client: d.client || '(без клиента)', clientId: d.clientId || null, debt: 0, count: 0, lastTs: d.ts };
     byClient[key].debt = money2(byClient[key].debt + d.debt);
     byClient[key].count++;
     if (d.ts > byClient[key].lastTs) byClient[key].lastTs = d.ts;
   });
-  const rows = Object.values(byClient).sort((a, b) => b.debt - a.debt);
+  const debts1c = db.debts1c;
+  const rows = Object.values(byClient).map(x => {
+    let debt1c = null;
+    if (debts1c && x.clientId) {
+      const c = db.clients.find(cl => cl.id === x.clientId);
+      if (c && c.code1c && debts1c.byCode[c.code1c]) debt1c = debts1c.byCode[c.code1c].balance;
+    }
+    return Object.assign(x, { debt1c, diff: debt1c != null ? money2(x.debt - debt1c) : null });
+  }).sort((a, b) => b.debt - a.debt);
+  const note = debts1c ? 'Долг по 1С сверен: ' + new Date(debts1c.ts).toLocaleString('ru-RU') : 'Долг по 1С ещё не синхронизирован — нажмите в 1С «Отправить долги контрагентов»';
   return {
     title: 'Долги по клиентам (текущие, за всё время)',
-    totals: [{ label: 'Всего долгов', value: money2(rows.reduce((a, x) => a + x.debt, 0)), money: true }, { label: 'Клиентов с долгом', value: rows.length }],
+    totals: [{ label: 'Всего долгов (сайт)', value: money2(rows.reduce((a, x) => a + x.debt, 0)), money: true }, { label: 'Клиентов с долгом', value: rows.length }],
     tables: [{
-      title: 'Долги по клиентам', headers: ['Клиент', 'Долг', 'Продаж с долгом', 'Последняя продажа'],
-      rows: rows.map(x => [x.client, x.debt, x.count, x.lastTs.slice(0, 10)])
+      title: 'Долги по клиентам · ' + note, headers: ['Клиент', 'Долг (сайт)', 'Долг (1С)', 'Расхождение', 'Продаж с долгом', 'Последняя продажа'],
+      rows: rows.map(x => [x.client, x.debt, x.debt1c != null ? x.debt1c : '—', x.diff != null ? x.diff : '—', x.count, x.lastTs.slice(0, 10)])
     }]
   };
 }
@@ -1816,6 +1825,22 @@ if (p === '/api/ops' && req.method === 'GET') {
     if (!isAdmin) return json(res, 403, { error: 'Только директор' });
     return json(res, 200, db.lastClientsDiff || null);
   }
+
+  // ---------- фактический долг контрагентов по 1С (счёт 1210) — для сравнения с тем, что считает сайт ----------
+  if (p === '/api/1c/debts-sync' && req.method === 'POST') {
+    if (!isAdmin) return json(res, 403, { error: 'Только директор' });
+    const items = data.items || [];
+    const byCode = {};
+    items.forEach(it => { if (it.code) byCode[String(it.code).trim()] = { name: it.name || '', balance: r2(+it.balance || 0) }; });
+    db.debts1c = { ts: new Date().toISOString(), byCode };
+    save();
+    return json(res, 200, { received: items.length });
+  }
+  if (p === '/api/1c/debts-sync' && req.method === 'GET') {
+    if (!isAdmin && role !== 'tech') return json(res, 403, { error: 'Нет прав' });
+    return json(res, 200, db.debts1c || null);
+  }
+
   if (p === '/api/1c/clients-apply' && req.method === 'POST') {
     if (!isAdmin) return json(res, 403, { error: 'Только директор' });
     const incoming = data.items || [];
