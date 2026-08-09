@@ -630,6 +630,202 @@ function reportPlan() {
   });
 }
 
+// ============================================================
+// ---------- ОТЧЁТЫ ДИРЕКТОРУ: единый экран выбора отчёта ----------
+// Каждый builder превращает уже существующие report*-функции (или новую логику)
+// в одинаковый вид { title, totals:[{label,value}], tables:[{title,headers,rows}] } —
+// из этого бесплатно получаются и таблицы на экране, и CSV, и печать в PDF.
+// ============================================================
+const REPORTS = {
+  sales:   { name: 'Продажи и прибыль', period: true },
+  debts:   { name: 'Долги по клиентам', period: false },
+  byagent: { name: 'По торговым/агентам', period: true },
+  cash:    { name: 'Касса и инкассация', period: true },
+  stock:   { name: 'Остатки на складах', period: false },
+  losses:  { name: 'Потери и списания', period: true },
+  output:  { name: 'Выработка', period: true },
+  costing: { name: 'Калькуляция себестоимости', period: false }
+};
+
+function money2(v) { return r2(v || 0); }
+
+function buildReportSales(from, to) {
+  const r = reportSales(from, to);
+  return {
+    title: 'Продажи и прибыль' + (from || to ? ' (' + (from || '…') + ' — ' + (to || '…') + ')' : ' (за всё время)'),
+    totals: [
+      { label: 'Выручка', value: r.totals.revenue, money: true },
+      { label: 'Себестоимость', value: r.totals.cost, money: true },
+      { label: 'Прибыль', value: r.totals.profit, money: true },
+      { label: 'Долг', value: r.totals.debt, money: true }
+    ],
+    tables: [
+      {
+        title: 'Продажи', headers: ['Дата', 'Блюдо', 'Кол-во', 'Сумма', 'Продавец', 'Клиент', 'Нал', 'QR', 'Долг'],
+        rows: r.rows.map(x => [x.ts.slice(0, 16).replace('T', ' '), x.name, x.qty, x.sum, x.sellerName, x.client || '', x.paymentCash, x.paymentQr, x.debt])
+      },
+      {
+        title: 'Долги по этим продажам', headers: ['Дата', 'Блюдо', 'Клиент', 'Продавец', 'Долг'],
+        rows: r.debts.map(x => [x.ts.slice(0, 16).replace('T', ' '), x.name, x.client || '', x.sellerName, x.debt])
+      },
+      {
+        title: 'По продавцам', headers: ['Продавец', 'Выручка', 'Продаж', 'Долг на нём'],
+        rows: r.byAgent.map(x => [x.sellerName, x.revenue, x.salesCount, x.debt])
+      }
+    ]
+  };
+}
+
+function buildReportDebts() {
+  const r = reportSales(null, null); // долги считаем за всё время, не за период
+  const byClient = {};
+  r.debts.forEach(d => {
+    const key = d.client || '(без клиента)';
+    if (!byClient[key]) byClient[key] = { client: key, debt: 0, count: 0, lastTs: d.ts };
+    byClient[key].debt = money2(byClient[key].debt + d.debt);
+    byClient[key].count++;
+    if (d.ts > byClient[key].lastTs) byClient[key].lastTs = d.ts;
+  });
+  const rows = Object.values(byClient).sort((a, b) => b.debt - a.debt);
+  return {
+    title: 'Долги по клиентам (текущие, за всё время)',
+    totals: [{ label: 'Всего долгов', value: money2(rows.reduce((a, x) => a + x.debt, 0)), money: true }, { label: 'Клиентов с долгом', value: rows.length }],
+    tables: [{
+      title: 'Долги по клиентам', headers: ['Клиент', 'Долг', 'Продаж с долгом', 'Последняя продажа'],
+      rows: rows.map(x => [x.client, x.debt, x.count, x.lastTs.slice(0, 10)])
+    }]
+  };
+}
+
+function buildReportByAgent(from, to) {
+  const r = reportSales(from, to);
+  return {
+    title: 'По торговым/агентам' + (from || to ? ' (' + (from || '…') + ' — ' + (to || '…') + ')' : ' (за всё время)'),
+    totals: [{ label: 'Выручка всего', value: r.totals.revenue, money: true }, { label: 'Долг всего', value: r.totals.debt, money: true }],
+    tables: [{
+      title: 'По продавцам', headers: ['Продавец', 'Выручка', 'Продаж', 'Долг на нём'],
+      rows: r.byAgent.slice().sort((a, b) => b.revenue - a.revenue).map(x => [x.sellerName, x.revenue, x.salesCount, x.debt])
+    }]
+  };
+}
+
+function buildReportCash(from, to) {
+  const inRange = ts => (!from || ts.slice(0, 10) >= from) && (!to || ts.slice(0, 10) <= to);
+  const byUser = {};
+  db.operations.filter(o => o.type === 'sale' && !o.cancelled && inRange(o.ts)).forEach(o => {
+    if (!byUser[o.userId]) byUser[o.userId] = { userId: o.userId, cash: 0, qr: 0, count: 0 };
+    byUser[o.userId].cash = money2(byUser[o.userId].cash + (o.paymentCash || 0));
+    byUser[o.userId].qr = money2(byUser[o.userId].qr + (o.paymentQr || 0));
+    byUser[o.userId].count++;
+  });
+  const handovers = db.cashHandovers.filter(h => inRange(h.ts || h.date || ''));
+  handovers.forEach(h => {
+    if (!byUser[h.userId]) byUser[h.userId] = { userId: h.userId, cash: 0, qr: 0, count: 0 };
+    byUser[h.userId].handed = money2((byUser[h.userId].handed || 0) + h.amount);
+  });
+  const rows = Object.values(byUser).map(x => {
+    const u = db.users.find(u => u.id === x.userId);
+    return { name: u ? u.name : '?', cash: x.cash, qr: x.qr, handed: x.handed || 0, onHand: money2(x.cash - (x.handed || 0)), count: x.count };
+  });
+  return {
+    title: 'Касса и инкассация' + (from || to ? ' (' + (from || '…') + ' — ' + (to || '…') + ')' : ' (за всё время)'),
+    totals: [
+      { label: 'Собрано наличными', value: money2(rows.reduce((a, x) => a + x.cash, 0)), money: true },
+      { label: 'Собрано QR', value: money2(rows.reduce((a, x) => a + x.qr, 0)), money: true },
+      { label: 'Сдано в кассу', value: money2(rows.reduce((a, x) => a + x.handed, 0)), money: true }
+    ],
+    tables: [
+      { title: 'По сотрудникам', headers: ['Сотрудник', 'Нал собрано', 'QR собрано', 'Сдано', 'Не сдано (за период)', 'Продаж'], rows: rows.map(x => [x.name, x.cash, x.qr, x.handed, x.onHand, x.count]) },
+      { title: 'История инкассаций', headers: ['Дата', 'Сотрудник', 'Сумма'], rows: handovers.map(h => { const u = db.users.find(u => u.id === h.userId); return [(h.ts || h.date || '').slice(0, 16).replace('T', ' '), u ? u.name : '?', h.amount]; }) }
+    ]
+  };
+}
+
+function buildReportStock(role) {
+  const rows = reportStock(role);
+  const flat = [];
+  rows.forEach(p => {
+    Object.keys(p.bySkl).forEach(skId => {
+      const sk = db.sklads.find(s => s.id === skId);
+      const c = p.bySkl[skId];
+      flat.push([p.name, p.type, p.unit, sk ? sk.name : skId, c.qty, c.value != null ? c.value : '']);
+    });
+  });
+  return {
+    title: 'Остатки на складах',
+    totals: [{ label: 'Позиций с остатком', value: rows.length }],
+    tables: [{ title: 'Остатки', headers: ['Товар', 'Тип', 'Ед', 'Склад', 'Кол-во', 'Сумма'], rows: flat }]
+  };
+}
+
+function buildReportLosses(from, to) {
+  const r = reportLosses(from, to);
+  return {
+    title: 'Потери и списания' + (from || to ? ' (' + (from || '…') + ' — ' + (to || '…') + ')' : ' (за всё время)'),
+    totals: [{ label: 'Списано на сумму', value: r.totals.writeoffSum, money: true }, { label: 'Недостача на сумму', value: r.totals.shortageSum, money: true }],
+    tables: [
+      { title: 'Усушка при обработке', headers: ['Дата', 'Сырьё', 'П/ф', 'До', 'После', 'Потеря', '%'], rows: r.processing.map(x => [x.ts.slice(0, 10), x.rawName, x.semiName, x.qtyBefore, x.qtyAfter, x.lossQty, x.lossPct]) },
+      { title: 'Списания', headers: ['Дата', 'Причина', 'Состав', 'Сумма'], rows: r.writeoffs.map(x => [x.ts.slice(0, 10), x.reason || '', x.items.map(i => i.name + ' ×' + i.qty).join(', '), x.sum]) },
+      { title: 'Недостачи по инвентаризации', headers: ['Дата', 'Товар', 'Расхождение', 'Сумма'], rows: r.shortages.map(x => [x.ts.slice(0, 10), x.name, x.diff, x.diffSum]) }
+    ]
+  };
+}
+
+function buildReportOutput(from, to) {
+  const r = reportOutput(from, to);
+  return {
+    title: 'Выработка' + (from || to ? ' (' + (from || '…') + ' — ' + (to || '…') + ')' : ' (за всё время)'),
+    totals: [],
+    tables: [
+      { title: 'Обработка (усушка)', headers: ['Сырьё', 'П/ф', 'Ед', 'Операций', 'До', 'После', 'Потеря %'], rows: r.processing.map(x => [x.raw, x.semi, x.unit, x.operations, x.totalBefore, x.totalAfter, x.avgLossPct]) },
+      { title: 'Выпуск готовой продукции', headers: ['Блюдо', 'Ед', 'Кол-во', 'Сумма'], rows: r.production.map(x => [x.name, x.unit, x.count, x.sum != null ? x.sum : '']) }
+    ]
+  };
+}
+
+function buildReportCosting() {
+  const r = reportCosting();
+  return {
+    title: 'Калькуляция себестоимости',
+    totals: [{ label: 'Позиций с рецептом', value: r.length }],
+    tables: [{
+      title: 'Калькуляция', headers: ['Блюдо', 'Тип', 'Ед', 'Статус', 'Себестоимость', 'Цена продажи', 'Маржа'],
+      rows: r.map(x => [x.name, x.type, x.unit, x.status, x.total, x.salePrice, money2(x.salePrice - x.total)])
+    }]
+  };
+}
+
+const REPORT_BUILDERS = {
+  sales: (from, to) => buildReportSales(from, to),
+  debts: () => buildReportDebts(),
+  byagent: (from, to) => buildReportByAgent(from, to),
+  cash: (from, to) => buildReportCash(from, to),
+  stock: (from, to, role) => buildReportStock(role),
+  losses: (from, to) => buildReportLosses(from, to),
+  output: (from, to) => buildReportOutput(from, to),
+  costing: () => buildReportCosting()
+};
+
+function csvCell(v) {
+  if (v == null) return '';
+  const s = String(v);
+  return /[;"\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+}
+function reportToCsv(report) {
+  const lines = ['\uFEFF' + csvCell(report.title)];
+  if (report.totals && report.totals.length) {
+    lines.push('');
+    report.totals.forEach(t => lines.push(csvCell(t.label) + ';' + csvCell(t.value)));
+  }
+  report.tables.forEach(t => {
+    lines.push('');
+    lines.push(csvCell(t.title));
+    lines.push(t.headers.map(csvCell).join(';'));
+    t.rows.forEach(row => lines.push(row.map(csvCell).join(';')));
+  });
+  return lines.join('\r\n');
+}
+
 // ---------- 1С экспорт: документы за дату (date === 'all' — за всё время) ----------
 function export1c(date) {
   if (date === 'all') {
@@ -1181,6 +1377,32 @@ if (p === '/api/ops' && req.method === 'GET') {
   }
   if (p === '/api/report/plan' && req.method === 'GET') {
     return json(res, 200, reportPlan());
+  }
+
+  // ---------- отчёты директору: единый экран выбора отчёта ----------
+  if (p === '/api/reports/list' && req.method === 'GET') {
+    if (!isAdmin && role !== 'tech') return json(res, 403, { error: 'Отчёты доступны директору' });
+    return json(res, 200, Object.keys(REPORTS).map(id => Object.assign({ id }, REPORTS[id])));
+  }
+  if (p === '/api/reports/run' && req.method === 'GET') {
+    if (!isAdmin && role !== 'tech') return json(res, 403, { error: 'Отчёты доступны директору' });
+    const type = u.searchParams.get('type');
+    const builder = REPORT_BUILDERS[type];
+    if (!builder) return json(res, 400, { error: 'Неизвестный отчёт' });
+    const from = u.searchParams.get('from') || null;
+    const to = u.searchParams.get('to') || null;
+    let report;
+    try { report = builder(from, to, role); }
+    catch (e) { return json(res, 500, { error: 'Ошибка построения отчёта: ' + e.message }); }
+    if (u.searchParams.get('format') === 'csv') {
+      const csv = reportToCsv(report);
+      res.writeHead(200, {
+        'Content-Type': 'text/csv; charset=utf-8',
+        'Content-Disposition': 'attachment; filename="' + type + (from ? '_' + from : '') + (to ? '_' + to : '') + '.csv"'
+      });
+      return res.end(csv);
+    }
+    return json(res, 200, report);
   }
 
   // ---------- отчёты ----------
