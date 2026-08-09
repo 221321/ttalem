@@ -66,6 +66,12 @@ h2{font-size:14px;font-weight:600;margin:4px 0 10px}
 .chev.open{transform:rotate(90deg)}
 .done{background:var(--accbg);border:1px solid #BBF7D0;border-radius:14px;padding:14px;margin-bottom:10px;text-align:center}
 .hl{font-size:11px;color:var(--gold);margin:14px 0 5px;font-weight:600;text-transform:uppercase;letter-spacing:1.5px}
+.kpis{display:flex;text-align:center;padding:2px 0}
+.kpis>div{flex:1}
+.kpis .n{display:block;font-size:17px;font-weight:700;margin-top:2px}
+.kpis .l{font-size:11px;color:var(--mut)}
+.datehead{font-size:11px;color:var(--mut);font-weight:600;margin:12px 0 4px;padding-left:2px}
+.alertbar{display:flex;justify-content:space-between;align-items:center;background:var(--ambbg);color:var(--amb);border-radius:12px;padding:10px 14px;margin-bottom:10px;font-size:13px}
 h2{letter-spacing:.3px}
 header img.lg{height:26px;display:block}
 .logochip{display:inline-flex;align-items:center;background:#1C1917;padding:6px 16px;border-radius:10px;line-height:0}
@@ -760,49 +766,81 @@ async function scrOutput(){
 window.outSet=function(days){ var d=new Date(); outTo=d.toISOString().slice(0,10); d.setDate(d.getDate()-days); outFrom=d.toISOString().slice(0,10); render(); };
 
 // ====== Продажи (реализация) ======
-var saleFrom = null, saleTo = null, saleQty = '', salePriceInput = '', saleClient = '';
+var saleFrom = null, saleTo = null, saleQty = '', salePriceInput = '', saleClient = '', salePeriod = 0;
 async function scrSales(){
   var from=saleFrom||today(), to=saleTo||today();
   var dishes=D.products.filter(function(p){ return p.type==='dish'; });
   var r=await api('/report/sales?from='+from+'&to='+to);
+  var multiDay = from!==to;
   var dishOpts=dishes.map(function(d){ return '<option value="'+d.id+'" data-price="'+(d.salePrice||0)+'">'+esc(d.name)+' ('+(d.salePrice||0)+' ₸)</option>'; }).join('');
-  var totalsHtml='<div class="card"><div class="row">'
-    +'<div><label>С</label><input type="date" value="'+from+'" onchange="saleFrom=this.value;render()"></div>'
-    +'<div><label>По</label><input type="date" value="'+to+'" onchange="saleTo=this.value;render()"></div>'
-    +'</div><div class="row" style="margin-top:8px">'
-    +'<button class="btn sec sm" onclick="saleSet(0)">Сегодня</button>'
-    +'<button class="btn sec sm" onclick="saleSet(7)">Неделя</button>'
-    +'<button class="btn sec sm" onclick="saleSet(30)">Месяц</button>'
-    +'</div><p class="sub" style="margin-top:8px">Выручка: '+money(r.totals.revenue)+' · Себестоимость: '+money(r.totals.cost)+' · Прибыль: '+money(r.totals.profit)+'</p>'
-    +(r.totals.debt>0?'<p class="sub" style="color:var(--red)">Долги за период: '+money(r.totals.debt)+'</p>':'')
+
+  // --- период + KPI ---
+  var periodHtml='<div class="card">'
+    +'<div class="tabbar" style="margin-bottom:0">'
+    +'<button class="'+(salePeriod===0?'on':'')+'" onclick="saleSet(0)">Сегодня</button>'
+    +'<button class="'+(salePeriod===7?'on':'')+'" onclick="saleSet(7)">Неделя</button>'
+    +'<button class="'+(salePeriod===30?'on':'')+'" onclick="saleSet(30)">Месяц</button>'
+    +'<button class="'+(exp.saleRange?'on':'')+'" onclick="toggle(\'saleRange\')" style="width:auto;padding:8px 12px">📅</button>'
+    +'</div>'
+    +(exp.saleRange?'<div class="row" style="margin-top:10px">'
+      +'<div><label>С</label><input type="date" value="'+from+'" onchange="saleFrom=this.value;salePeriod=-1;render()"></div>'
+      +'<div><label>По</label><input type="date" value="'+to+'" onchange="saleTo=this.value;salePeriod=-1;render()"></div>'
+      +'</div>':'')
+    +'<div class="kpis" style="margin-top:14px">'
+      +'<div><span class="l">Выручка</span><span class="n">'+money(r.totals.revenue)+'</span></div>'
+      +'<div><span class="l">Себестоимость</span><span class="n" style="color:var(--mut)">'+money(r.totals.cost)+'</span></div>'
+      +'<div><span class="l">Прибыль</span><span class="n" style="color:'+(r.totals.profit>=0?'var(--acc)':'var(--red)')+'">'+money(r.totals.profit)+'</span></div>'
+    +'</div>'
+    +(r.totals.debt>0?'<div style="text-align:center;margin-top:10px"><span class="pill bad">Долги за период: '+money(r.totals.debt)+'</span></div>':'')
     +'</div>';
-  var formHtml='<div class="card"><b>Оформить продажу</b>'
-    +'<label>Блюдо</label><select id="saP" onchange="salePriceInput=D.products.find(function(p){return p.id===this.value}).salePrice||0;renderInPlace()">'+dishOpts+'</select>'
-    +'<label>Количество</label><input class="big" id="saQ" type="number" min="1" step="1" inputmode="numeric" value="'+saleQty+'" onfocus="this.select()">'
-    +'<label>Цена за единицу, ₸</label><input class="big" id="saPrice" type="number" step="1" inputmode="decimal" value="'+salePriceInput+'">'
-    +'<label>Клиент (необязательно)</label><input id="saClient" type="text" value="'+esc(saleClient)+'" placeholder="Имя/название">'
-    +'<div style="height:8px"></div><label style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="saPaid" checked style="width:auto"> Оплачено сразу</label>'
-    +'<div style="height:10px"></div><button class="btn" onclick="saleSave()">Продать</button></div>';
-  var rowsHtml=r.rows.length ? r.rows.map(function(s){
-    return card('sl'+s.id,
-      '<span style="flex:1"><b>'+esc(s.name)+'</b> × '+fmt(s.qty)+'</span><b>'+money(s.sum)+'</b>',
-      '<div class="sub">'+new Date(s.ts).toLocaleString('ru-RU',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})+(s.client?' · '+esc(s.client):'')+'</div>'
-        +'<div class="sub">Себестоимость: '+money(s.costSum)+' · Прибыль: '+money(s.profit)+'</div>'
-        +(s.paid?'<span class="pill ok">оплачено</span>':'<span class="pill bad">долг '+money(s.debt)+'</span>'
-          +'<div style="height:6px"></div><input class="big" id="pay'+s.id+'" type="number" step="1" placeholder="Сумма оплаты" style="margin-bottom:6px">'
-          +'<button class="btn sec sm" onclick="event.stopPropagation();salePay(\''+s.id+'\')">Погасить</button>')
-    );
-  }).join('') : '<p class="sub">Продаж за период нет.</p>';
+
+  // --- наличные у агентов: компактный алерт ---
   var cashSummary=await api('/cash/status').catch(function(){ return null; });
   var cashHtml='';
   if(cashSummary&&cashSummary.rows&&cashSummary.rows.length){
-    cashHtml='<div class="hl">💵 Наличные на руках у агентов</div>'
-      +cashSummary.rows.map(function(r2){ return '<div class="li"><span class="nm">'+esc(r2.name)+'</span><span class="vl" style="color:var(--amb)">'+money(r2.onHand)+'</span></div>'; }).join('')
-      +'<p class="sub" style="margin-top:4px">Не сдано в кассу/на счёт.</p>';
+    var cashTotal=cashSummary.rows.reduce(function(a,r2){ return a+r2.onHand; },0);
+    cashHtml='<div class="card tap" onclick="toggle(\'cashList\')">'
+      +'<div class="alertbar" style="margin:0"><span>💵 Наличные у агентов, не сданы</span><b>'+money(cashTotal)+'</b></div>'
+      +(exp.cashList?'<div class="cbody">'+cashSummary.rows.map(function(r2){ return '<div class="li"><span class="nm">'+esc(r2.name)+'</span><span class="vl" style="color:var(--amb)">'+money(r2.onHand)+'</span></div>'; }).join('')+'</div>':'')
+      +'</div>';
   }
-  return '<h2>💵 Продажи</h2>'+totalsHtml+cashHtml+formHtml+'<div class="hl">Продажи за период</div>'+rowsHtml;
+
+  // --- форма продажи: кол-во и цена в один ряд ---
+  var formHtml='<div class="card"><b>Оформить продажу</b>'
+    +'<label>Блюдо</label><select id="saP" onchange="salePriceInput=D.products.find(function(p){return p.id===this.value}).salePrice||0;renderInPlace()">'+dishOpts+'</select>'
+    +'<div class="row">'
+      +'<div><label>Количество</label><input class="big" id="saQ" type="number" min="1" step="1" inputmode="numeric" value="'+saleQty+'" onfocus="this.select()"></div>'
+      +'<div><label>Цена, ₸</label><input class="big" id="saPrice" type="number" step="1" inputmode="decimal" value="'+salePriceInput+'"></div>'
+    +'</div>'
+    +'<div class="row" style="align-items:end;margin-top:10px">'
+      +'<div><label style="margin-top:0">Клиент (необязательно)</label><input id="saClient" type="text" value="'+esc(saleClient)+'" placeholder="Имя/название"></div>'
+      +'<div style="flex:0 0 auto"><label style="display:flex;align-items:center;gap:6px;white-space:nowrap;margin:0;padding:12px 4px"><input type="checkbox" id="saPaid" checked style="width:auto"> Оплачено</label></div>'
+    +'</div>'
+    +'<div style="height:10px"></div><button class="btn" onclick="saleSave()">Продать</button></div>';
+
+  // --- список продаж, сгруппированный по датам при периоде >1 дня ---
+  var rowsHtml='';
+  if(!r.rows.length){
+    rowsHtml='<p class="sub">Продаж за период нет.</p>';
+  } else {
+    var lastDate=null;
+    r.rows.forEach(function(s){
+      var d=new Date(s.ts);
+      var dkey=d.toLocaleDateString('ru-RU',{day:'2-digit',month:'2-digit'});
+      if(multiDay && dkey!==lastDate){ rowsHtml+='<div class="datehead">'+dkey+'</div>'; lastDate=dkey; }
+      rowsHtml+=card('sl'+s.id,
+        '<span style="flex:1"><b>'+esc(s.name)+'</b> × '+fmt(s.qty)+'</span><b>'+money(s.sum)+'</b>',
+        '<div class="sub">'+d.toLocaleString('ru-RU',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})+(s.client?' · '+esc(s.client):'')+'</div>'
+          +'<div class="sub">Себестоимость: '+money(s.costSum)+' · Прибыль: '+money(s.profit)+'</div>'
+          +(s.paid?'<span class="pill ok">оплачено</span>':'<span class="pill bad">долг '+money(s.debt)+'</span>'
+            +'<div style="height:6px"></div><input class="big" id="pay'+s.id+'" type="number" step="1" placeholder="Сумма оплаты" style="margin-bottom:6px">'
+            +'<button class="btn sec sm" onclick="event.stopPropagation();salePay(\''+s.id+'\')">Погасить</button>')
+      );
+    });
+  }
+  return '<h2>💵 Продажи</h2>'+periodHtml+cashHtml+formHtml+'<div class="hl">Продажи за период</div>'+rowsHtml;
 }
-window.saleSet=function(days){ var d=new Date(); saleTo=d.toISOString().slice(0,10); d.setDate(d.getDate()-days); saleFrom=d.toISOString().slice(0,10); render(); };
+window.saleSet=function(days){ salePeriod=days; var d=new Date(); saleTo=d.toISOString().slice(0,10); d.setDate(d.getDate()-days); saleFrom=d.toISOString().slice(0,10); render(); };
 window.saleSave=async function(){
   var pid=$('#saP').value, qty=+$('#saQ').value, price=$('#saPrice').value, client=$('#saClient').value, paid=$('#saPaid').checked;
   if(!(qty>0)) return toast('Введите количество');
