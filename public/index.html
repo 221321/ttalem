@@ -123,6 +123,7 @@ var editRecipe = [];
 var nomPasteOpen = false, nomPasteText = '';
 var stPasteOpen = false, stPasteText = '';
 var clPasteOpen = false, clPasteText = '';
+var salesPasteOpen = false, salesPasteText = '';
 var agentQ = '', agentSel = null, agentQty = 1, agentPrice = 0;
 var agentClientId = null, agentClientQ = '', agentClientsCache = [];
 var agentMode = 'quick', agentCart = [], agentCartQ = '';
@@ -1221,6 +1222,7 @@ async function scrSync(){
   var nd=await api('/1c/nomenclature-diff').catch(function(){ return null; });
   var cd=await api('/1c/clients-diff').catch(function(){ return null; });
   var sd=await api('/1c/stock-diff').catch(function(){ return null; });
+  var sld=await api('/1c/sales-diff').catch(function(){ return null; });
   var S=D.settings||{};
   var settingsHtml='<div class="card"><label>Порог расхождения для уведомлений, %</label>'
     +'<input class="big" id="diffTh" type="number" step="1" min="1" value="'+(S.diffThresholdPct||5)+'">'
@@ -1353,10 +1355,46 @@ async function scrSync(){
   }
   clHtml+='</div>';
 
+  // ---- блок сверки реализации ----
+  var salesHtml='<div class="card"><b>📄 Сверка реализации с 1С</b><p class="sub" style="margin-top:4px">1С отчитывается по документам «Реализация товаров и услуг» с заполненным ИдSkyMeal — сверяем с продажами/накладными сайта. Статус документа (пилюля ниже, в журнале) обновляется автоматически при каждой сверке.</p>';
+  if(sld){
+    salesHtml+='<p class="sub" style="margin-top:6px">Последняя сверка: '+new Date(sld.ts).toLocaleString('ru-RU')+' · получено документов из 1С: '+sld.totalIncoming+' · совпадает и проведено: '+sld.matched+'</p>';
+    if(sld.notPosted&&sld.notPosted.length){
+      salesHtml+='<div class="hl">Создано в 1С, но не проведено ('+sld.notPosted.length+')</div>'
+        +'<div class="stocklist">'+sld.notPosted.map(function(it){ return '<div class="li"><span class="nm">№'+esc(it.docNumber)+(it.client?' · '+esc(it.client):'')+'<div class="sub">'+money(it.sum)+' · '+new Date(it.ts).toLocaleDateString('ru-RU')+'</div></span></div>'; }).join('')+'</div>';
+    }
+    if(sld.missingIn1c&&sld.missingIn1c.length){
+      salesHtml+='<div class="hl">Есть продажа у нас, документа в 1С нет ('+sld.missingIn1c.length+')</div>'
+        +'<div class="stocklist">'+sld.missingIn1c.map(function(it){
+          var dsPill=it.docStatus?(it.docStatus.status==='created'?'<span class="pill ok">1С отчитывалась: №'+esc(it.docStatus.docNumber||'')+'</span>':'<span class="pill bad">1С: ошибка — '+esc(it.docStatus.message||'')+'</span>'):'<span class="pill warn">1С не отчитывалась</span>';
+          return '<div class="li"><span class="nm">'+(it.client?esc(it.client):'без клиента')+' · '+money(it.sum)+'<div class="sub">'+new Date(it.ts).toLocaleDateString('ru-RU')+'</div>'+dsPill+'</span></div>';
+        }).join('')+'</div>'
+        +'<p class="sub" style="margin-top:6px">Если тут висит «1С отчитывалась: №...» — значит документ в 1С был, но потом его удалили/распровели вручную. Если «1С не отчитывалась» — запусти загрузку продаж в 1С ещё раз.</p>';
+    }
+    if(sld.notInSkyMeal&&sld.notInSkyMeal.length){
+      salesHtml+='<div class="hl">Документ в 1С ссылается на несуществующую продажу ('+sld.notInSkyMeal.length+')</div>'
+        +'<div class="stocklist">'+sld.notInSkyMeal.map(function(it){ return '<div class="li"><span class="nm">№'+esc(it.docNumber||'?')+'<div class="sub">ref: '+esc(it.ref)+'</div></span></div>'; }).join('')+'</div>'
+        +'<p class="sub" style="margin-top:6px">Обычно это продажа, которую потом удалили/сторнировали на сайте — документ в 1С стоит проверить вручную.</p>';
+    }
+    if((!sld.notPosted||!sld.notPosted.length)&&(!sld.missingIn1c||!sld.missingIn1c.length)&&(!sld.notInSkyMeal||!sld.notInSkyMeal.length)){
+      salesHtml+='<p class="sub" style="margin-top:8px">Расхождений нет — все продажи есть в 1С и проведены.</p>';
+    }
+  } else {
+    salesHtml+='<p class="sub" style="margin-top:6px">Сверки ещё не было — запусти в 1С «Проверить реализацию», либо проверь вручную ниже.</p>';
+  }
+  salesHtml+='<div style="height:8px"></div><button class="btn sec sm" onclick="salesPasteOpen=!salesPasteOpen;renderInPlace()">'+(salesPasteOpen?'Скрыть ручную проверку':'Проверить вручную (вставить JSON)')+'</button>';
+  if(salesPasteOpen){
+    salesHtml+='<div style="height:8px"></div><label>JSON вида {"items":[{"ref":"sale|o1cbei","docNumber":"000123","posted":true}]}</label>'
+      +'<textarea id="salesPasteArea" rows="6" style="width:100%;padding:10px;border:1px solid var(--line);border-radius:10px;font-family:monospace;font-size:12px">'+esc(salesPasteText)+'</textarea>'
+      +'<div style="height:8px"></div><button class="btn sec" onclick="salesCheckPaste()">Проверить</button>';
+  }
+  salesHtml+='</div>';
+
   return '<h2>Обмен с 1С</h2>'
     +nomHtml
     +stHtml
     +clHtml
+    +salesHtml
     +'<div class="card"><label>Дата выгрузки</label>'
     +'<input type="date" value="'+d+'" onchange="syncDate=this.value;render()">'
     +'<div style="height:8px"></div>'
@@ -1441,6 +1479,18 @@ window.clCheckPaste=async function(){
   try{
     await api('/1c/clients-diff','POST',{items:items});
     toast('✅ Сверка выполнена'); clPasteOpen=false; renderInPlace();
+  }catch(e){ toast(e.message); }
+};
+window.salesCheckPaste=async function(){
+  salesPasteText=$('#salesPasteArea').value;
+  var parsed;
+  try{ parsed=JSON.parse(salesPasteText); }
+  catch(e){ return toast('Это не валидный JSON'); }
+  var items=Array.isArray(parsed)?parsed:parsed.items;
+  if(!Array.isArray(items)) return toast('Ожидается {"items":[...]} или массив');
+  try{
+    await api('/1c/sales-diff','POST',{items:items});
+    toast('✅ Сверка выполнена'); salesPasteOpen=false; await reload(); render();
   }catch(e){ toast(e.message); }
 };
 window.clientsApply=async function(){
