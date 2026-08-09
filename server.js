@@ -824,7 +824,7 @@ const server = http.createServer((req, res) => {
       let data = {};
       if (body) { try { data = JSON.parse(body); } catch (e) { return json(res, 400, { error: 'bad json' }); } }
       route(req, res, u, data);
-    } catch (e) { json(res, 500, { error: e.message }); }
+    } catch (e) { console.error('[500]', req.method, u.pathname, e); json(res, 500, { error: e.message }); }
   });
 });
 
