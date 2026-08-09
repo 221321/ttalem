@@ -6,6 +6,9 @@ const path = require('path');
 const crypto = require('crypto');
 
 const PORT = process.env.PORT || process.argv[2] || 3050;
+// секрет для машина-машина вызовов из 1С (как в Жайыке): 1С не логинится через PIN,
+// а стучится сразу с этим ключом — используется только для payment-confirm ниже.
+const SYNC_SECRET = process.env.SYNC_SECRET || 'skymeal_1c_2026';
 const DB_FILE = path.join(__dirname, 'data', 'db.json');
 const PUB = path.join(__dirname, 'public');
 
@@ -27,6 +30,8 @@ const COOK_ROLES = {
   cook_head:   { name: 'Главный повар',    skladIds: [] }, // все склады
 };
 const isCook = role => role === 'cook' || role.startsWith('cook_');
+// Торговый / экспедитор — не повар, но и не менеджер: продаёт, видит только своё, деньги/себестоимость не видит
+const isAgent = role => role === 'agent';
 
 // ---------- миграция ----------
 (function migrate() {
@@ -393,14 +398,25 @@ function reportSales(from, to) {
 
   const rows = ops.slice().sort((a, b) => a.ts < b.ts ? 1 : -1).map(o => {
     const p = product(o.productId);
+    const seller = db.users.find(u => u.id === o.userId);
     return {
       id: o.id, ts: o.ts, name: p ? p.name : '?', unit: p ? p.unit : '',
       qty: o.qty, price: o.price, sum: o.sum, costSum: o.costSum, profit: o.profit,
-      client: o.client, paid: o.paid, paidAmount: o.paidAmount, debt: r2((o.sum || 0) - (o.paidAmount || 0))
+      client: o.client, paid: o.paid, paidAmount: o.paidAmount, debt: r2((o.sum || 0) - (o.paidAmount || 0)),
+      sellerId: o.userId, sellerName: seller ? seller.name : '?', source: o.source || 'сайт'
     };
   });
 
   const debts = rows.filter(r => !r.paid && r.debt > 0.001);
+
+  // сколько числится за каждым продавцом (актуально для торговых/экспедиторов — кто на руках держит долг)
+  const byAgent = {};
+  rows.forEach(r => {
+    if (!byAgent[r.sellerId]) byAgent[r.sellerId] = { sellerId: r.sellerId, sellerName: r.sellerName, revenue: 0, debt: 0, salesCount: 0 };
+    byAgent[r.sellerId].revenue = r2(byAgent[r.sellerId].revenue + (r.sum || 0));
+    byAgent[r.sellerId].salesCount++;
+    if (!r.paid) byAgent[r.sellerId].debt = r2(byAgent[r.sellerId].debt + r.debt);
+  });
 
   const totals = {
     revenue: r2(rows.reduce((a, r) => a + (r.sum || 0), 0)),
@@ -409,7 +425,7 @@ function reportSales(from, to) {
     debt: r2(debts.reduce((a, r) => a + r.debt, 0))
   };
 
-  return { rows, debts, totals };
+  return { rows, debts, byAgent: Object.values(byAgent), totals };
 }
 // ---------- отчёт по потерям: усушка при обработке, списания, недостачи по инвентаризации ----------
 function reportLosses(from, to) {
@@ -728,6 +744,21 @@ function route(req, res, u, data) {
     sessions[token] = user.id;
     return json(res, 200, { token, user: { id: user.id, name: user.name, role: user.role } });
   }
+
+  // ---------- реалтайм-подтверждение оплаты из 1С (как в Жайыке): без логина, просто секрет ----------
+  // 1С вызывает это СРАЗУ после того, как реально зарегистрировала оплату (провела кассовый/банковский документ) —
+  // а не по кнопке "синхронизировать" раз в день. ref — это ИдSkyMeal вида "sale|o1cbei".
+  if (p === '/api/1c/payment-confirm' && req.method === 'POST') {
+    if (data.secret !== SYNC_SECRET) return json(res, 403, { error: 'Нет доступа' });
+    const id = String(data.ref || '').replace(/^sale\|/, '');
+    const rec = db.operations.find(o => o.id === id && o.type === 'sale');
+    if (!rec) return json(res, 404, { error: 'Продажа не найдена: ' + data.ref });
+    rec.paidAmount = r2(Math.min(rec.sum, +data.paidAmount || 0));
+    rec.paid = !!data.paid || rec.paidAmount >= rec.sum - 0.001;
+    save();
+    return json(res, 200, { id: rec.id, paidAmount: rec.paidAmount, paid: rec.paid });
+  }
+
   const user = auth(req);
   if (!user) return json(res, 401, { error: 'Нужен вход' });
   const role = user.role;
@@ -862,6 +893,7 @@ function route(req, res, u, data) {
 
   // ---------- операции ----------
   if (p === '/api/ops' && req.method === 'POST') {
+    if (isAgent(role) && data.type !== 'sale') return json(res, 403, { error: 'Торговый/экспедитор может только оформлять продажу' });
     if (data.type === 'receipt' && isCook(role)) return json(res, 403, { error: 'Нет прав' });
     if (data.type === 'inventory' && !isAdmin) return json(res, 403, { error: 'Инвентаризацию проводит директор' });
     if (data.type === 'writeoff' && isCook(role)) return json(res, 403, { error: 'Акт списания оформляет менеджер или директор' });
@@ -881,6 +913,7 @@ function route(req, res, u, data) {
     if (isCook(role)) return json(res, 403, { error: 'Нет прав' });
     const rec = db.operations.find(o => o.id === mSalePay[1] && o.type === 'sale');
     if (!rec) return json(res, 404, { error: 'Продажа не найдена' });
+    if (isAgent(role) && rec.userId !== user.id) return json(res, 403, { error: 'Можно отмечать оплату только по своим продажам' });
     const add = r2(+data.amount || 0);
     if (!(add > 0)) return json(res, 400, { error: 'Сумма должна быть больше нуля' });
     rec.paidAmount = r2(Math.min(rec.sum, (rec.paidAmount || 0) + add));
@@ -894,7 +927,7 @@ if (p === '/api/ops' && req.method === 'GET') {
     const from = u.searchParams.get('from');
     const to = u.searchParams.get('to');
     const type = u.searchParams.get('type');
-    const mine = u.searchParams.get('mine');
+    const mine = isAgent(role) ? true : u.searchParams.get('mine'); // агент всегда видит только своё
     if (date) ops = ops.filter(o => o.ts.slice(0, 10) === date);
     if (from) ops = ops.filter(o => o.ts.slice(0, 10) >= from);
     if (to) ops = ops.filter(o => o.ts.slice(0, 10) <= to);
@@ -943,7 +976,7 @@ if (p === '/api/ops' && req.method === 'GET') {
     return json(res, 200, reportLosses(u.searchParams.get('from'), u.searchParams.get('to')));
   }
   if (p === '/api/report/sales') {
-    if (isCook(role)) return json(res, 403, { error: 'Отчёт по реализации недоступен' });
+    if (isCook(role) || isAgent(role)) return json(res, 403, { error: 'Отчёт по реализации недоступен' });
     return json(res, 200, reportSales(u.searchParams.get('from'), u.searchParams.get('to')));
   }
   if (p === '/api/report/output') {
@@ -1082,6 +1115,62 @@ if (p === '/api/ops' && req.method === 'GET') {
     db.lastStockDiff = null;
     save();
     return json(res, 200, { applied: rows.length, total });
+  }
+
+  // ---------- сверка оплат: 1С присылает {items:[{ref, paid, paidAmount}]}, ref = ИдSkyMeal вида "sale|o1cbei" ----------
+  // Деньги подтверждает касса/банк в 1С — это источник правды по факту оплаты.
+  function findSaleByRef(ref) {
+    const id = String(ref || '').replace(/^sale\|/, '');
+    return db.operations.find(o => o.id === id && o.type === 'sale');
+  }
+  if (p === '/api/1c/payment-diff' && req.method === 'POST') {
+    if (!isAdmin) return json(res, 403, { error: 'Только директор' });
+    const incoming = data.items || [];
+    const mismatches = [];
+    const notFound = [];
+    let matchedSame = 0;
+    incoming.forEach(item => {
+      const rec = findSaleByRef(item.ref);
+      if (!rec) { notFound.push({ ref: item.ref }); return; }
+      const oursPaid = !!rec.paid;
+      const oursAmount = r2(rec.paidAmount || 0);
+      const theirsPaid = !!item.paid;
+      const theirsAmount = r2(+item.paidAmount || 0);
+      if (oursPaid === theirsPaid && Math.abs(oursAmount - theirsAmount) < 0.01) {
+        matchedSame++;
+      } else {
+        const p2 = product(rec.productId);
+        mismatches.push({
+          ref: item.ref, saleId: rec.id, name: p2 ? p2.name : '?', client: rec.client, sum: rec.sum,
+          skyMealPaid: oursPaid, skyMealAmount: oursAmount, oneCPaid: theirsPaid, oneCAmount: theirsAmount
+        });
+      }
+    });
+    const result = { matchedSame, mismatches, notFound };
+    db.lastPaymentDiff = Object.assign({ ts: new Date().toISOString(), totalIncoming: incoming.length }, result);
+    save();
+    return json(res, 200, result);
+  }
+  if (p === '/api/1c/payment-diff' && req.method === 'GET') {
+    if (!isAdmin) return json(res, 403, { error: 'Только директор' });
+    return json(res, 200, db.lastPaymentDiff || null);
+  }
+  // применение сверки: подтягиваем факт оплаты из 1С (только по расхождениям из последней сверки, либо явным списком)
+  if (p === '/api/1c/payment-apply' && req.method === 'POST') {
+    if (!isAdmin) return json(res, 403, { error: 'Только директор' });
+    const incoming = data.items || (db.lastPaymentDiff ? db.lastPaymentDiff.mismatches.map(m => ({ ref: m.ref, paid: m.oneCPaid, paidAmount: m.oneCAmount })) : []);
+    let applied = 0;
+    const errors = [];
+    incoming.forEach(item => {
+      const rec = findSaleByRef(item.ref);
+      if (!rec) { errors.push(item.ref); return; }
+      rec.paidAmount = r2(Math.min(rec.sum, +item.paidAmount || 0));
+      rec.paid = !!item.paid || rec.paidAmount >= rec.sum - 0.001;
+      applied++;
+    });
+    db.lastPaymentDiff = null;
+    save();
+    return json(res, 200, { applied, errors });
   }
 
   // ---------- приём продаж из 1С (если пробивают сразу в 1С, минуя сайт) ----------
