@@ -563,9 +563,10 @@ function export1c(date) {
     moveOps[key].items[o.productId].qty = r2(moveOps[key].items[o.productId].qty + o.qty);
     moveOps[key].items[o.productId].sum = r2(moveOps[key].items[o.productId].sum + o.sum);
   });
-  Object.values(moveOps).forEach(g => {
+  Object.entries(moveOps).forEach(([key, g]) => {
     const from = sklad(g.fromSkId), to = sklad(g.toSkId);
     docs.push({
+      Ид: 'move|' + date + '|' + key,
       ВидДокумента: 'ПеремещениеТМЗ', Дата: date, Время: t(),
       СкладОтправитель: from ? from.name : g.fromSkId,
       СкладПолучатель: to ? to.name : g.toSkId,
@@ -583,10 +584,11 @@ function export1c(date) {
     procMap[k].qtyAfter = r2(procMap[k].qtyAfter + o.qtyAfter);
     procMap[k].sum = r2(procMap[k].sum + o.sum);
   });
-  Object.values(procMap).forEach(g => {
+  Object.entries(procMap).forEach(([key, g]) => {
     const raw = product(g.rawId), semi = product(g.semiId);
     const sk = sklad(g.semiSkId);
     docs.push({
+      Ид: 'proc|' + date + '|' + key,
       ВидДокумента: 'КомплектацияНоменклатуры', Дата: date, Время: t(), Склад: sk ? sk.name : g.semiSkId,
       Комментарий: 'SKY MEAL: выработка ' + raw.name + ' → ' + semi.name,
       SkyMealТип: 'processing',
@@ -611,6 +613,7 @@ function export1c(date) {
     const d = product(pid);
     const sk = sklad(g.skladId);
     docs.push({
+      Ид: 'prod|' + date + '|' + pid,
       ВидДокумента: 'КомплектацияНоменклатуры', Дата: date, Время: t(),
       Склад: sk ? sk.name : g.skladId,
       Комментарий: 'SKY MEAL: выпуск ' + d.name,
@@ -623,6 +626,7 @@ function export1c(date) {
   // акты списания
   dayOps.filter(o => o.type === 'writeoff').forEach(o => {
     docs.push({
+      Ид: 'wo|' + o.id,
       ВидДокумента: 'СписаниеТМЗ', Дата: date, Время: t(),
       Комментарий: 'SKY MEAL: ' + o.reason,
       Товары: o.items.map(it => { const p = product(it.productId); const sk = sklad(it.skladId); return { Наименование: p.name, Код: p.code1c || '', Количество: it.qty, Сумма: it.sum, Склад: sk ? sk.name : it.skladId }; })
@@ -634,6 +638,7 @@ function export1c(date) {
     const p = product(o.productId);
     const sk = sklad(o.skladId);
     docs.push({
+      Ид: 'sale|' + o.id,
       ВидДокумента: 'РеализацияТМЗ', Дата: date, Время: t(),
       Комментарий: 'SKY MEAL: продажа ' + p.name + (o.client ? ' — ' + o.client : ''),
       Клиент: o.client || '',
@@ -1118,7 +1123,7 @@ if (p === '/api/ops' && req.method === 'GET') {
       if (existing) {
         if (existing.name !== item.name) { existing.name = item.name; updated++; }
       } else if (data.createMissing) {
-        const nid2 = 'p' + Math.random().toString(36).slice(2, 8);
+        const nid2 = nid('p');
         db.products.push({ id: nid2, name: item.name, type: 'raw', unit: item.unit || 'г', priceKg: 0, sourceId: null, code1c: item.code, recipe: [], recipeLog: [], lastCost: 0, skladId: 'sk2' });
         created++;
       }
