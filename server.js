@@ -126,6 +126,9 @@ const isAgent = role => role === 'agent';
   // сдачи наличности агентами/водителями (инкассация) — сколько и когда сдали
   if (!Array.isArray(db.cashHandovers)) { db.cashHandovers = []; changed = true; }
 
+  // статусы документов в 1С (как в ГБ2: реестр "отправлено / создано в 1С / ошибка" по каждому Ид)
+  if (!db.docStatus || typeof db.docStatus !== 'object') { db.docStatus = {}; changed = true; }
+
   // Чиним sourceId: продукт не может быть выработкой из самого себя
   db.products.forEach(p => {
     if (p.sourceId === p.id) { p.sourceId = null; changed = true; }
@@ -416,7 +419,57 @@ function opSale(o) {
     paymentCash, paymentQr, paymentDebt, paid, paidAmount
   };
 }
-const OPS = { receipt: opReceipt, processing: opProcessing, production: opProduction, inventory: opInventory, move: opMove, writeoff: opWriteoff, sale: opSale };
+// накладная — несколько позиций одним документом (как в Жайыке: клиент + адрес + список строк).
+// Всё-или-ничего: сначала проверяем остатки по ВСЕМ строкам, потом списываем — чтобы не списать половину
+// накладной и не упереться в нехватку на третьей позиции.
+function opWaybill(o) {
+  const items = Array.isArray(o.items) ? o.items : [];
+  if (!items.length) throw new Error('Добавьте хотя бы одну позицию');
+  const planned = items.map(it => {
+    const p = product(it.productId);
+    if (!p) throw new Error('Продукт не найден: ' + it.productId);
+    if (!(+it.qty > 0)) throw new Error('Количество должно быть больше нуля: ' + p.name);
+    const skId = it.skladId || p.skladId || 'sk7';
+    const s = stockOf(it.productId, skId);
+    if (s.qty + 0.001 < +it.qty) throw new Error('Недостаточно «' + p.name + '» на складе: есть ' + r2(s.qty) + ', требуется ' + it.qty);
+    const uc = unitCost(it.productId);
+    const price = it.price != null && it.price !== '' ? +it.price : (p.salePrice || 0);
+    const qty = +it.qty;
+    return { p, s, skId, uc, price, qty, costSum: r2(uc * qty), sum: r2(price * qty) };
+  });
+  // всё в порядке — списываем
+  const lines = planned.map(x => {
+    x.s.qty = r2(x.s.qty - x.qty);
+    x.s.value = r2(Math.max(0, x.s.value - x.costSum));
+    return { productId: x.p.id, name: x.p.name, unit: x.p.unit, skladId: x.skId, qty: x.qty, price: x.price, sum: x.sum, costSum: x.costSum };
+  });
+  const sum = r2(lines.reduce((a, l) => a + l.sum, 0));
+  const costSum = r2(lines.reduce((a, l) => a + l.costSum, 0));
+
+  let paymentCash = 0, paymentQr = 0;
+  if (o.paymentCash != null || o.paymentQr != null) {
+    paymentCash = r2(Math.max(0, +o.paymentCash || 0));
+    paymentQr = r2(Math.max(0, +o.paymentQr || 0));
+  }
+  const paidAmount = r2(Math.min(sum, paymentCash + paymentQr));
+  const paymentDebt = r2(Math.max(0, sum - paidAmount));
+  const paid = paidAmount >= sum - 0.001;
+
+  let clientName = (o.client || '').trim();
+  let clientId = o.clientId || null;
+  let address = (o.address || '').trim();
+  if (clientId) {
+    const c = db.clients.find(x => x.id === clientId);
+    if (c) { clientName = c.name; if (!address) address = c.address || ''; } else clientId = null;
+  }
+
+  return {
+    type: 'waybill', items: lines, sum, costSum, profit: r2(sum - costSum),
+    client: clientName, clientId, address,
+    paymentCash, paymentQr, paymentDebt, paid, paidAmount
+  };
+}
+const OPS = { receipt: opReceipt, processing: opProcessing, production: opProduction, inventory: opInventory, move: opMove, writeoff: opWriteoff, sale: opSale, waybill: opWaybill };
 
 // ---------- отчёты ----------
 // ---------- отчёт по реализации: выручка, себестоимость, прибыль, долги ----------
@@ -702,6 +755,27 @@ function export1c(date) {
     });
   });
 
+  // накладные (многострочные продажи с адресом — оформление как в Жайыке: клиент + адрес + список строк)
+  dayOps.filter(o => o.type === 'waybill').forEach(o => {
+    const cl = o.clientId ? db.clients.find(c => c.id === o.clientId) : null;
+    const seller = db.users.find(u => u.id === o.userId);
+    docs.push({
+      Ид: 'waybill|' + o.id,
+      ВидДокумента: 'РеализацияТМЗ', Дата: date, Время: t(),
+      Комментарий: 'SKY MEAL: накладная' + (o.client ? ' — ' + o.client : '') + ' (' + o.items.length + ' поз.)',
+      Клиент: o.client || '',
+      КлиентИд: o.clientId || '',
+      КлиентКод1С: cl ? (cl.code1c || '') : '',
+      АдресДоставки: o.address || '',
+      Оплачено: !!o.paid,
+      ОплаченоНал: o.paymentCash || 0,
+      ОплаченоQR: o.paymentQr || 0,
+      Долг: o.paymentDebt || 0,
+      Продавец: seller ? seller.name : '',
+      Товары: o.items.map(it => { const p = product(it.productId); return { Наименование: it.name, Код: p ? (p.code1c || '') : '', Количество: it.qty, Цена: it.price, Сумма: it.sum }; })
+    });
+  });
+
   return docs;
 }
 
@@ -814,6 +888,28 @@ function route(req, res, u, data) {
     return json(res, 200, { id: c.id, code1c: c.code1c });
   }
 
+  // ---------- сверка документов с 1С (как в ГБ2): 1С отчитывается по каждому документу —
+  // создан ли он реально, под каким номером, или была ошибка. Без этого сайт никогда не узнаёт,
+  // дошёл ли конкретный документ до 1С или потерялся/не смог провестись. ----------
+  if (p === '/api/1c/doc-status' && req.method === 'POST') {
+    if (data.secret !== SYNC_SECRET) return json(res, 403, { error: 'Нет доступа' });
+    const items = Array.isArray(data.items) ? data.items : (data.ref ? [data] : []);
+    let updated = 0;
+    items.forEach(it => {
+      const ref = String(it.ref || '');
+      if (!ref) return;
+      db.docStatus[ref] = {
+        status: it.status === 'created' ? 'created' : 'error', // 'created' | 'error'
+        docNumber: it.docNumber || '',
+        message: it.message || '',
+        ts: new Date().toISOString()
+      };
+      updated++;
+    });
+    save();
+    return json(res, 200, { updated });
+  }
+
   const user = auth(req);
   if (!user) return json(res, 401, { error: 'Нужен вход' });
   const role = user.role;
@@ -833,6 +929,7 @@ function route(req, res, u, data) {
       products: myProds.map(x => productOut(x, role)),
       stock, sklads: db.sklads,
       settings: isAdmin ? db.settings : undefined,
+      docStatus: isAdmin ? db.docStatus : undefined,
       alerts: (isAdmin || isTech) ? db.alerts.filter(a => !a.read).slice(0, 10) : [],
       me: { id: user.id, name: user.name, role }
     });
@@ -962,7 +1059,7 @@ function route(req, res, u, data) {
 
   // ---------- операции ----------
   if (p === '/api/ops' && req.method === 'POST') {
-    if (isAgent(role) && data.type !== 'sale') return json(res, 403, { error: 'Торговый/экспедитор может только оформлять продажу' });
+    if (isAgent(role) && !['sale', 'waybill'].includes(data.type)) return json(res, 403, { error: 'Торговый/экспедитор может только оформлять продажу' });
     if (data.type === 'receipt' && isCook(role)) return json(res, 403, { error: 'Нет прав' });
     if (data.type === 'inventory' && !isAdmin) return json(res, 403, { error: 'Инвентаризацию проводит директор' });
     if (data.type === 'writeoff' && isCook(role)) return json(res, 403, { error: 'Акт списания оформляет менеджер или директор' });
@@ -974,7 +1071,11 @@ function route(req, res, u, data) {
     rec.id = nid('o'); rec.ts = new Date().toISOString(); rec.userId = user.id;
     db.operations.push(rec); save();
     const out = Object.assign({}, rec);
-    if (!isAdmin) { delete out.sum; delete out.price; delete out.writeoffs; delete out.costSum; delete out.profit; }
+    if (!isAdmin) {
+      delete out.writeoffs; delete out.costSum; delete out.profit;
+      if (out.items && out.type === 'waybill') out.items = out.items.map(it => { const i2 = Object.assign({}, it); delete i2.costSum; if (!isAgent(role)) { delete i2.sum; delete i2.price; } return i2; });
+      if (!isAgent(role)) { delete out.sum; delete out.price; }
+    }
     return json(res, 200, out);
   }
   const mSalePay = p.match(/^\/api\/sales\/([^/]+)\/pay$/);
@@ -1009,9 +1110,16 @@ if (p === '/api/ops' && req.method === 'GET') {
     if (type) ops = ops.filter(o => o.type === type);
     if (mine) ops = ops.filter(o => o.userId === user.id);
     ops = ops.slice(-500);
+    // подмешиваем статус документа в 1С (если продажа/накладная уже была отправлена и 1С отчиталась)
+    ops = ops.map(o => {
+      if (o.type !== 'sale' && o.type !== 'waybill') return o;
+      const ds = db.docStatus[o.type + '|' + o.id];
+      return ds ? Object.assign({}, o, { docStatus: ds }) : o;
+    });
     if (!isAdmin) ops = ops.map(o => {
       const c = Object.assign({}, o);
       delete c.writeoffs; delete c.costSum; delete c.profit; // себестоимость/прибыль — только директору
+      if (c.items && c.type === 'waybill') c.items = c.items.map(it => { const i2 = Object.assign({}, it); delete i2.costSum; if (!isAgent(role)) { delete i2.sum; delete i2.price; } return i2; });
       if (!isAgent(role)) { delete c.sum; delete c.price; } // агенту сумма/цена нужны — это то, что он собирает с клиента
       return c;
     });
@@ -1368,10 +1476,24 @@ if (p === '/api/ops' && req.method === 'GET') {
     if (!name) return json(res, 400, { error: 'Введите имя клиента' });
     // не плодим дубли и на своей стороне — если такое имя уже есть, отдаём существующего
     const existing = db.clients.find(c => c.name.toLowerCase() === name.toLowerCase());
-    if (existing) return json(res, 200, existing);
-    const nc = { id: nid('cl'), name, code1c: '' };
+    if (existing) {
+      if (data.address && !existing.address) { existing.address = String(data.address).trim(); save(); }
+      return json(res, 200, existing);
+    }
+    const nc = { id: nid('cl'), name, code1c: '', address: (data.address || '').trim(), phone: (data.phone || '').trim() };
     db.clients.push(nc); save();
     return json(res, 200, nc);
+  }
+  const mClient = p.match(/^\/api\/clients\/([^/]+)$/);
+  if (mClient && req.method === 'PUT') {
+    if (isCook(role)) return json(res, 403, { error: 'Нет прав' });
+    const c = db.clients.find(x => x.id === mClient[1]);
+    if (!c) return json(res, 404, { error: 'Клиент не найден' });
+    if (data.name !== undefined) c.name = String(data.name).trim();
+    if (data.address !== undefined) c.address = String(data.address).trim();
+    if (data.phone !== undefined) c.phone = String(data.phone).trim();
+    save();
+    return json(res, 200, c);
   }
 
   if (p === '/api/1c/clients-diff' && req.method === 'POST') {
