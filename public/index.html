@@ -133,6 +133,7 @@ var nomPasteOpen = false, nomPasteText = '';
 var stPasteOpen = false, stPasteText = '';
 var clPasteOpen = false, clPasteText = '';
 var salesPasteOpen = false, salesPasteText = '';
+var payPasteOpen = false, payPasteText = '';
 var agentQ = '', agentSel = null, agentQty = 1, agentPrice = 0;
 var agentClientId = null, agentClientQ = '', agentClientsCache = [];
 var agentMode = 'quick', agentCart = [], agentCartQ = '';
@@ -1323,6 +1324,7 @@ async function scrSync(){
   var cd=await api('/1c/clients-diff').catch(function(){ return null; });
   var sd=await api('/1c/stock-diff').catch(function(){ return null; });
   var sld=await api('/1c/sales-diff').catch(function(){ return null; });
+  var pd=await api('/1c/payment-diff').catch(function(){ return null; });
   var S=D.settings||{};
   var settingsHtml='<div class="card"><label>Порог расхождения для уведомлений, %</label>'
     +'<input class="big" id="diffTh" type="number" step="1" min="1" value="'+(S.diffThresholdPct||5)+'">'
@@ -1490,11 +1492,43 @@ async function scrSync(){
   }
   salesHtml+='</div>';
 
+  // ---- блок сверки оплат ----
+  var payHtml='<div class="card"><b>💳 Сверка оплат с 1С</b><p class="sub" style="margin-top:4px">Касса/банк в 1С — источник правды по факту оплаты. Здесь видно, где сайт и 1С расходятся.</p>';
+  if(pd){
+    payHtml+='<p class="sub" style="margin-top:6px">Последняя сверка: '+new Date(pd.ts).toLocaleString('ru-RU')+' · получено позиций: '+pd.totalIncoming+' · совпадает: '+pd.matchedSame+'</p>';
+    if(pd.mismatches&&pd.mismatches.length){
+      payHtml+='<div class="hl">Расхождения ('+pd.mismatches.length+')</div>'
+        +'<div class="stocklist">'+pd.mismatches.map(function(m){
+          return '<div class="li"><span class="nm">'+esc(m.name)+(m.client?' · '+esc(m.client):'')+'<div class="sub">сайт: '+(m.skyMealPaid?'оплачено '+money(m.skyMealAmount):'не оплачено, '+money(m.skyMealAmount))+' · 1С: '+(m.oneCPaid?'оплачено '+money(m.oneCAmount):'не оплачено, '+money(m.oneCAmount))+'</div></span></div>';
+        }).join('')+'</div>';
+    }
+    if(pd.notFound&&pd.notFound.length){
+      payHtml+='<div class="hl">Ref из 1С не найден на сайте ('+pd.notFound.length+')</div>'
+        +'<div class="stocklist">'+pd.notFound.map(function(it){ return '<div class="li"><span class="nm">'+esc(it.ref)+'</span></div>'; }).join('')+'</div>';
+    }
+    if((!pd.mismatches||!pd.mismatches.length)&&(!pd.notFound||!pd.notFound.length)){
+      payHtml+='<p class="sub" style="margin-top:8px">Расхождений нет.</p>';
+    }
+    if(pd.mismatches&&pd.mismatches.length){
+      payHtml+='<div style="height:8px"></div><button class="btn grn" onclick="payApply()">Применить сверку (взять факт из 1С)</button>';
+    }
+  } else {
+    payHtml+='<p class="sub" style="margin-top:6px">Сверки ещё не было — запусти в 1С «Сверить оплаты», либо проверь вручную ниже.</p>';
+  }
+  payHtml+='<div style="height:8px"></div><button class="btn sec sm" onclick="payPasteOpen=!payPasteOpen;renderInPlace()">'+(payPasteOpen?'Скрыть ручную проверку':'Проверить вручную (вставить JSON)')+'</button>';
+  if(payPasteOpen){
+    payHtml+='<div style="height:8px"></div><label>JSON вида {"items":[{"ref":"sale|o1cbei","paid":true,"paidAmount":1500}]}</label>'
+      +'<textarea id="payPasteArea" rows="6" style="width:100%;padding:10px;border:1px solid var(--line);border-radius:10px;font-family:monospace;font-size:12px">'+esc(payPasteText)+'</textarea>'
+      +'<div style="height:8px"></div><button class="btn sec" onclick="payCheckPaste()">Проверить</button>';
+  }
+  payHtml+='</div>';
+
   return '<h2>Обмен с 1С</h2>'
     +nomHtml
     +stHtml
     +clHtml
     +salesHtml
+    +payHtml
     +'<div class="card"><label>Дата выгрузки</label>'
     +'<input type="date" value="'+d+'" onchange="syncDate=this.value;render()">'
     +'<div style="height:8px"></div>'
@@ -1591,6 +1625,25 @@ window.salesCheckPaste=async function(){
   try{
     await api('/1c/sales-diff','POST',{items:items});
     toast('✅ Сверка выполнена'); salesPasteOpen=false; await reload(); render();
+  }catch(e){ toast(e.message); }
+};
+window.payCheckPaste=async function(){
+  payPasteText=$('#payPasteArea').value;
+  var parsed;
+  try{ parsed=JSON.parse(payPasteText); }
+  catch(e){ return toast('Это не валидный JSON'); }
+  var items=Array.isArray(parsed)?parsed:parsed.items;
+  if(!Array.isArray(items)) return toast('Ожидается {"items":[...]} или массив');
+  try{
+    await api('/1c/payment-diff','POST',{items:items});
+    toast('✅ Сверка выполнена'); payPasteOpen=false; renderInPlace();
+  }catch(e){ toast(e.message); }
+};
+window.payApply=async function(){
+  if(!confirm('Обновить факт оплаты на сайте по данным из 1С? Это изменит статус "оплачено"/долг по продажам с расхождением.')) return;
+  try{
+    var r=await api('/1c/payment-apply','POST',{});
+    toast('✅ Применено: '+r.applied+(r.errors&&r.errors.length?', не найдено: '+r.errors.length:'')); await reload(); render();
   }catch(e){ toast(e.message); }
 };
 window.clientsApply=async function(){
