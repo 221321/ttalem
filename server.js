@@ -1021,6 +1021,73 @@ function exportSpecs1c() {
     }));
 }
 
+// ---------- 1С импорт: спецификации ОБРАТНО (если состав поправили в 1С) ----------
+// Ожидаемый формат входа: { items: [ { ownerCode, ownerName, components: [ {code, name, qty} ] } ] }
+// ownerCode/code — это code1c соответствующего блюда/ингредиента на стороне SkyMeal.
+// qty — то же самое число, что SkyMeal отдаёт в exportSpecs1c() (Количество) — то есть
+// в граммах/мл-эквиваленте, если единица получателя кг/л (см. recipeCost: факт деления
+// на 1000 идёт по единице ЦЕЛЕВОГО товара, не по тому, что прислала 1С).
+function specsDiff(incoming) {
+  const byCode = {};
+  db.products.forEach(p => { if (p.code1c) byCode[p.code1c] = p; });
+  const ownerNotFound = [];
+  const changed = [];
+  incoming.forEach(spec => {
+    const ownerCode = String(spec.ownerCode || '').trim();
+    const dish = byCode[ownerCode];
+    if (!dish) { ownerNotFound.push({ code: ownerCode, name: spec.ownerName || '' }); return; }
+    const curByProdId = {};
+    (dish.recipe || []).forEach(it => { curByProdId[it.productId] = it; });
+    const seenProdIds = new Set();
+    const rowChanges = [];
+    (spec.components || []).forEach(comp => {
+      const code = String(comp.code || '').trim();
+      const raw = code ? byCode[code] : null;
+      if (!raw) { rowChanges.push({ type: 'componentNotFound', name: comp.name || '', code }); return; }
+      seenProdIds.add(raw.id);
+      const cur = curByProdId[raw.id];
+      const newQty = +comp.qty || 0;
+      if (!cur) rowChanges.push({ type: 'add', productId: raw.id, name: raw.name, qty: newQty });
+      else if (Math.abs(cur.qty - newQty) > 0.001) rowChanges.push({ type: 'qty', productId: raw.id, name: raw.name, oldQty: cur.qty, newQty });
+    });
+    (dish.recipe || []).forEach(it => {
+      if (!seenProdIds.has(it.productId)) {
+        const p2 = product(it.productId);
+        rowChanges.push({ type: 'removedIn1c', productId: it.productId, name: p2 ? p2.name : '?', qty: it.qty });
+      }
+    });
+    if (rowChanges.length) changed.push({ dishId: dish.id, dishName: dish.name, dishCode: ownerCode, changes: rowChanges });
+  });
+  return { ownerNotFound, changed };
+}
+// применяет qty-изменения и добавления из последней (или явно переданной) сверки специф.
+// НИЧЕГО не удаляет из рецепта автоматически — "removedIn1c" только показывается, но
+// не применяется, чтобы правка в 1С по ошибке не срезала ингредиент молча.
+function specsApply(diffData, user) {
+  let dishesTouched = 0, qtyChanged = 0, added = 0, skippedRemovals = 0;
+  (diffData.changed || []).forEach(row => {
+    const dish = product(row.dishId);
+    if (!dish) return;
+    let touched = false;
+    row.changes.forEach(ch => {
+      if (ch.type === 'qty') {
+        const it = dish.recipe.find(x => x.productId === ch.productId);
+        if (it) { it.qty = ch.newQty; qtyChanged++; touched = true; }
+      } else if (ch.type === 'add') {
+        dish.recipe.push({ productId: ch.productId, qty: ch.qty, noteRaw: '', noteDone: '' });
+        added++; touched = true;
+      } else if (ch.type === 'removedIn1c') {
+        skippedRemovals++;
+      }
+    });
+    if (touched) {
+      dishesTouched++;
+      logRecipe(dish, user, 'обновлено из 1С (сверка спецификаций)');
+    }
+  });
+  return { dishesTouched, qtyChanged, added, skippedRemovals };
+}
+
 // ---------- http ----------
 function json(res, code, data) {
   res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8' });
@@ -1573,6 +1640,27 @@ if (p === '/api/ops' && req.method === 'GET') {
   if (p === '/api/1c/specs') {
     if (!isAdmin) return json(res, 403, { error: 'Только директор' });
     return json(res, 200, { Спецификации: exportSpecs1c() });
+  }
+  if (p === '/api/1c/specs-diff' && req.method === 'POST') {
+    if (!isAdmin) return json(res, 403, { error: 'Только директор' });
+    const incoming = data.items || [];
+    const result = specsDiff(incoming);
+    db.lastSpecsDiff = Object.assign({ ts: new Date().toISOString(), totalIncoming: incoming.length }, result);
+    save();
+    return json(res, 200, result);
+  }
+  if (p === '/api/1c/specs-diff' && req.method === 'GET') {
+    if (!isAdmin) return json(res, 403, { error: 'Только директор' });
+    return json(res, 200, db.lastSpecsDiff || null);
+  }
+  if (p === '/api/1c/specs-apply' && req.method === 'POST') {
+    if (!isAdmin) return json(res, 403, { error: 'Только директор' });
+    const src = data.diff || db.lastSpecsDiff;
+    if (!src) return json(res, 400, { error: 'Нет данных сверки — сначала запусти specs-diff' });
+    const result = specsApply(src, user);
+    db.lastSpecsDiff = null;
+    save();
+    return json(res, 200, result);
   }
   if (p === '/api/1c/nomenclature-diff' && req.method === 'POST') {
     if (!isAdmin) return json(res, 403, { error: 'Только директор' });
