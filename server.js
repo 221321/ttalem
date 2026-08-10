@@ -1133,6 +1133,50 @@ function route(req, res, u, data) {
     return json(res, 200, { updated });
   }
 
+  // ---------- приём продаж из 1С (если пробивают сразу в 1С, минуя сайт) ----------
+  // Перенесено на SYNC_SECRET (было на сессии isAdmin): вызывается автоматикой 1С,
+  // а не человеком из браузера, поэтому не может зависеть от x-token — сессии живут
+  // только в памяти и обнуляются при каждом pm2 restart.
+  if (p === '/api/1c/sales-import' && req.method === 'POST') {
+    if (data.secret !== SYNC_SECRET) return json(res, 403, { error: 'Нет доступа' });
+    const sysUser = db.users.find(u => u.role === 'admin') || db.users[0];
+    const incoming = data.items || [];
+    const byCode = {};
+    db.products.forEach(pr => { if (pr.code1c) byCode[pr.code1c] = pr; });
+    const already = new Set(db.operations.filter(o => o.type === 'sale' && o.ref1c).map(o => o.ref1c));
+    const created = [], skipped = [], notFound = [];
+    incoming.forEach(item => {
+      const ref = String(item.docNumber || '').trim();
+      if (ref && already.has(ref)) { skipped.push(ref); return; }
+      const code = String(item.code || '').trim();
+      const pr = byCode[code];
+      if (!pr) { notFound.push(code); return; }
+      try {
+        const rec = opSale({ productId: pr.id, qty: +item.qty || 0, price: item.price, client: item.client, paid: item.paid !== false });
+        rec.id = nid('o'); rec.ts = new Date().toISOString(); rec.userId = sysUser ? sysUser.id : 'system'; rec.source = '1С'; rec.ref1c = ref || undefined;
+        db.operations.push(rec);
+        created.push(rec.id);
+        if (ref) already.add(ref);
+      } catch (e) {
+        notFound.push(code + ' (' + e.message + ')');
+      }
+    });
+    save();
+    return json(res, 200, { created: created.length, skipped: skipped.length, errors: notFound });
+  }
+
+  // ---------- фактический долг контрагентов по 1С (счёт 1210) — для сравнения с тем, что считает сайт ----------
+  // Тоже переведено на SYNC_SECRET по той же причине, что и sales-import выше.
+  if (p === '/api/1c/debts-sync' && req.method === 'POST') {
+    if (data.secret !== SYNC_SECRET) return json(res, 403, { error: 'Нет доступа' });
+    const items = data.items || [];
+    const byCode = {};
+    items.forEach(it => { if (it.code) byCode[String(it.code).trim()] = { name: it.name || '', balance: r2(+it.balance || 0) }; });
+    db.debts1c = { ts: new Date().toISOString(), byCode };
+    save();
+    return json(res, 200, { received: items.length });
+  }
+
   const user = auth(req);
   if (!user) return json(res, 401, { error: 'Нужен вход' });
   const role = user.role;
@@ -1731,34 +1775,6 @@ if (p === '/api/ops' && req.method === 'GET') {
     return json(res, 200, { applied, errors });
   }
 
-  // ---------- приём продаж из 1С (если пробивают сразу в 1С, минуя сайт) ----------
-  if (p === '/api/1c/sales-import' && req.method === 'POST') {
-    if (!isAdmin) return json(res, 403, { error: 'Только директор' });
-    const incoming = data.items || [];
-    const byCode = {};
-    db.products.forEach(pr => { if (pr.code1c) byCode[pr.code1c] = pr; });
-    const already = new Set(db.operations.filter(o => o.type === 'sale' && o.ref1c).map(o => o.ref1c));
-    const created = [], skipped = [], notFound = [];
-    incoming.forEach(item => {
-      const ref = String(item.docNumber || '').trim();
-      if (ref && already.has(ref)) { skipped.push(ref); return; }
-      const code = String(item.code || '').trim();
-      const pr = byCode[code];
-      if (!pr) { notFound.push(code); return; }
-      try {
-        const rec = opSale({ productId: pr.id, qty: +item.qty || 0, price: item.price, client: item.client, paid: item.paid !== false });
-        rec.id = nid('o'); rec.ts = new Date().toISOString(); rec.userId = user.id; rec.source = '1С'; rec.ref1c = ref || undefined;
-        db.operations.push(rec);
-        created.push(rec.id);
-        if (ref) already.add(ref);
-      } catch (e) {
-        notFound.push(code + ' (' + e.message + ')');
-      }
-    });
-    save();
-    return json(res, 200, { created: created.length, skipped: skipped.length, errors: notFound });
-  }
-
   if (p === '/api/1c/nomenclature-apply' && req.method === 'POST') {
     if (!isAdmin) return json(res, 403, { error: 'Только директор' });
     const incoming = data.items || [];
@@ -1844,16 +1860,6 @@ if (p === '/api/ops' && req.method === 'GET') {
     return json(res, 200, db.lastClientsDiff || null);
   }
 
-  // ---------- фактический долг контрагентов по 1С (счёт 1210) — для сравнения с тем, что считает сайт ----------
-  if (p === '/api/1c/debts-sync' && req.method === 'POST') {
-    if (!isAdmin) return json(res, 403, { error: 'Только директор' });
-    const items = data.items || [];
-    const byCode = {};
-    items.forEach(it => { if (it.code) byCode[String(it.code).trim()] = { name: it.name || '', balance: r2(+it.balance || 0) }; });
-    db.debts1c = { ts: new Date().toISOString(), byCode };
-    save();
-    return json(res, 200, { received: items.length });
-  }
   if (p === '/api/1c/debts-sync' && req.method === 'GET') {
     if (!isAdmin && role !== 'tech') return json(res, 403, { error: 'Нет прав' });
     return json(res, 200, db.debts1c || null);
