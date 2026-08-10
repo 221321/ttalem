@@ -134,6 +134,7 @@ var stPasteOpen = false, stPasteText = '';
 var clPasteOpen = false, clPasteText = '';
 var salesPasteOpen = false, salesPasteText = '';
 var payPasteOpen = false, payPasteText = '';
+var specsPasteOpen = false, specsPasteText = '';
 var agentQ = '', agentSel = null, agentQty = 1, agentPrice = 0;
 var agentClientId = null, agentClientQ = '', agentClientsCache = [];
 var agentMode = 'quick', agentCart = [], agentCartQ = '';
@@ -1325,6 +1326,7 @@ async function scrSync(){
   var sd=await api('/1c/stock-diff').catch(function(){ return null; });
   var sld=await api('/1c/sales-diff').catch(function(){ return null; });
   var pd=await api('/1c/payment-diff').catch(function(){ return null; });
+  var spd=await api('/1c/specs-diff').catch(function(){ return null; });
   var S=D.settings||{};
   var settingsHtml='<div class="card"><label>Порог расхождения для уведомлений, %</label>'
     +'<input class="big" id="diffTh" type="number" step="1" min="1" value="'+(S.diffThresholdPct||5)+'">'
@@ -1523,12 +1525,50 @@ async function scrSync(){
   }
   payHtml+='</div>';
 
+  // ---- блок сверки спецификаций (состав/граммовки) с 1С — обратная синхронизация ----
+  var specsHtml='<div class="card"><b>📐 Сверка спецификаций с 1С</b><p class="sub" style="margin-top:4px">Если состав техкарты поправили прямо в 1С — здесь видно расхождение с сайтом. Позиции, которые 1С убрала, автоматически НЕ удаляются — только показываются, убрать нужно руками.</p>';
+  if(spd){
+    specsHtml+='<p class="sub" style="margin-top:6px">Последняя сверка: '+new Date(spd.ts).toLocaleString('ru-RU')+' · получено спецификаций: '+spd.totalIncoming+'</p>';
+    if(spd.ownerNotFound&&spd.ownerNotFound.length){
+      specsHtml+='<div class="hl">Владелец не найден на сайте ('+spd.ownerNotFound.length+')</div>'
+        +'<div class="stocklist">'+spd.ownerNotFound.map(function(it){ return '<div class="li"><span class="nm">'+esc(it.name||'?')+'<div class="sub">код '+esc(it.code)+'</div></span></div>'; }).join('')+'</div>'
+        +'<p class="sub" style="margin-top:6px">Сначала сверь номенклатуру — у этого блюда на сайте нет такого code1c.</p>';
+    }
+    if(spd.changed&&spd.changed.length){
+      specsHtml+='<div class="hl">Есть расхождения ('+spd.changed.length+' техкарт)</div>'
+        +'<div class="stocklist">'+spd.changed.map(function(row){
+          var lines=row.changes.map(function(ch){
+            if(ch.type==='qty') return 'изменить: '+esc(ch.name)+' '+fmt(ch.oldQty)+' → '+fmt(ch.newQty);
+            if(ch.type==='add') return 'добавить: '+esc(ch.name)+' '+fmt(ch.qty);
+            if(ch.type==='removedIn1c') return 'в 1С убрано (не тронуто): '+esc(ch.name)+' '+fmt(ch.qty);
+            if(ch.type==='componentNotFound') return 'компонент не найден на сайте: '+esc(ch.name||ch.code);
+            return '';
+          }).join('<br>');
+          return '<div class="li"><span class="nm">'+esc(row.dishName)+'<div class="sub">'+lines+'</div></span></div>';
+        }).join('')+'</div>'
+        +'<div style="height:8px"></div><button class="btn grn" onclick="specsApply()">Применить сверку (изменить/добавить)</button>';
+    }
+    if((!spd.ownerNotFound||!spd.ownerNotFound.length)&&(!spd.changed||!spd.changed.length)){
+      specsHtml+='<p class="sub" style="margin-top:8px">Расхождений нет.</p>';
+    }
+  } else {
+    specsHtml+='<p class="sub" style="margin-top:6px">Сверки ещё не было — запусти в 1С «Сверить спецификации», либо проверь вручную ниже.</p>';
+  }
+  specsHtml+='<div style="height:8px"></div><button class="btn sec sm" onclick="specsPasteOpen=!specsPasteOpen;renderInPlace()">'+(specsPasteOpen?'Скрыть ручную проверку':'Проверить вручную (вставить JSON)')+'</button>';
+  if(specsPasteOpen){
+    specsHtml+='<div style="height:8px"></div><label>JSON вида {"items":[{"ownerCode":"00000000098","ownerName":"Омлет","components":[{"code":"00000000039","name":"Молоко","qty":40}]}]}</label>'
+      +'<textarea id="specsPasteArea" rows="6" style="width:100%;padding:10px;border:1px solid var(--line);border-radius:10px;font-family:monospace;font-size:12px">'+esc(specsPasteText)+'</textarea>'
+      +'<div style="height:8px"></div><button class="btn sec" onclick="specsCheckPaste()">Проверить</button>';
+  }
+  specsHtml+='</div>';
+
   return '<h2>Обмен с 1С</h2>'
     +nomHtml
     +stHtml
     +clHtml
     +salesHtml
     +payHtml
+    +specsHtml
     +'<div class="card"><label>Дата выгрузки</label>'
     +'<input type="date" value="'+d+'" onchange="syncDate=this.value;render()">'
     +'<div style="height:8px"></div>'
@@ -1644,6 +1684,25 @@ window.payApply=async function(){
   try{
     var r=await api('/1c/payment-apply','POST',{});
     toast('✅ Применено: '+r.applied+(r.errors&&r.errors.length?', не найдено: '+r.errors.length:'')); await reload(); render();
+  }catch(e){ toast(e.message); }
+};
+window.specsCheckPaste=async function(){
+  specsPasteText=$('#specsPasteArea').value;
+  var parsed;
+  try{ parsed=JSON.parse(specsPasteText); }
+  catch(e){ return toast('Это не валидный JSON'); }
+  var items=Array.isArray(parsed)?parsed:parsed.items;
+  if(!Array.isArray(items)) return toast('Ожидается {"items":[...]} или массив');
+  try{
+    await api('/1c/specs-diff','POST',{items:items});
+    toast('✅ Сверка выполнена'); specsPasteOpen=false; renderInPlace();
+  }catch(e){ toast(e.message); }
+};
+window.specsApply=async function(){
+  if(!confirm('Подтянуть изменения из 1С в техкарты на сайте (количества и новые ингредиенты)? Позиции, убранные в 1С, останутся — их нужно убрать вручную.')) return;
+  try{
+    var r=await api('/1c/specs-apply','POST',{});
+    toast('✅ Обновлено техкарт: '+r.dishesTouched+', изменено: '+r.qtyChanged+', добавлено: '+r.added+(r.skippedRemovals?', пропущено удалений: '+r.skippedRemovals:'')); await reload(); render();
   }catch(e){ toast(e.message); }
 };
 window.clientsApply=async function(){
