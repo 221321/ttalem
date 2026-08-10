@@ -1577,7 +1577,7 @@ window.nomApply=async function(){
     var items=(nd.matchedDetails||[]).map(function(m){ return {code:m.code,name:m.theirName}; })
       .concat((nd.newInOneC||[]).map(function(it){ return {code:it.code,name:it.name,unit:it.unit}; }));
     var r=await api('/1c/nomenclature-apply','POST',{items:items,createMissing:createMissing});
-    toast('✅ Обновлено: '+r.updated+', создано: '+r.created); await reload(); render();
+    toast('✅ Обновлено: '+r.updated+', связано по имени: '+r.linked+', создано: '+r.created); await reload(); render();
   }catch(e){ toast(e.message); }
 };
 window.stCheckPaste=async function(){
