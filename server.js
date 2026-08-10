@@ -1780,12 +1780,24 @@ if (p === '/api/ops' && req.method === 'GET') {
     const incoming = data.items || [];
     const byCode = {};
     db.products.forEach(p => { if (p.code1c) byCode[p.code1c] = p; });
-    let updated = 0, created = 0;
+    // фикс: раньше сопоставление шло только по code1c — если товар уже существовал
+    // в SkyMeal со старым/пустым кодом (например, после переключения тестовой базы 1С
+    // на боевую), новый код к нему не привязывался, а вместо этого создавался дубль.
+    // Дубль не участвовал в существующих утверждённых техкартах — компоненты в
+    // спецификации у 1С уходили с пустым кодом. Теперь, как и в clients-apply,
+    // сначала пробуем привязать код1с к существующему товару по точному имени.
+    const byNameNoCode = {};
+    db.products.forEach(p => { if (!p.code1c) byNameNoCode[p.name.trim().toLowerCase()] = p; });
+    let updated = 0, created = 0, linked = 0;
     incoming.forEach(item => {
       const existing = byCode[item.code];
       if (existing) {
         if (existing.name !== item.name) { existing.name = item.name; updated++; }
-      } else if (data.createMissing) {
+        return;
+      }
+      const byName = byNameNoCode[String(item.name || '').trim().toLowerCase()];
+      if (byName) { byName.code1c = item.code; linked++; return; }
+      if (data.createMissing) {
         const nid2 = nid('p');
         db.products.push({ id: nid2, name: item.name, type: 'raw', unit: item.unit || 'г', priceKg: 0, sourceId: null, code1c: item.code, recipe: [], recipeLog: [], lastCost: 0, skladId: 'sk2' });
         created++;
@@ -1793,7 +1805,7 @@ if (p === '/api/ops' && req.method === 'GET') {
     });
     db.lastNomenclatureDiff = null;
     save();
-    return json(res, 200, { updated, created });
+    return json(res, 200, { updated, created, linked });
   }
 
   // ---------- клиенты (контрагенты): справочник + сверка с 1С, по тому же принципу что и номенклатура ----------
