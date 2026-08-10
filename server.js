@@ -1780,14 +1780,16 @@ if (p === '/api/ops' && req.method === 'GET') {
     const incoming = data.items || [];
     const byCode = {};
     db.products.forEach(p => { if (p.code1c) byCode[p.code1c] = p; });
-    // фикс: раньше сопоставление шло только по code1c — если товар уже существовал
-    // в SkyMeal со старым/пустым кодом (например, после переключения тестовой базы 1С
-    // на боевую), новый код к нему не привязывался, а вместо этого создавался дубль.
-    // Дубль не участвовал в существующих утверждённых техкартах — компоненты в
-    // спецификации у 1С уходили с пустым кодом. Теперь, как и в clients-apply,
-    // сначала пробуем привязать код1с к существующему товару по точному имени.
+    // фикс v2: сначала было "по имени подхватываем только товары с ПУСТЫМ code1c" —
+    // но при переключении с тестовой базы 1С на боевую у товаров код НЕ пустой, а просто
+    // чужой/старый (от тестовой базы), и он никогда не встретится в incoming с боевой.
+    // Правильное условие — код1с не входит в множество кодов, которые прислала ЭТА
+    // сверка: значит он точно устарел, безопасно подхватывать по имени.
+    const incomingCodes = new Set(incoming.map(item => String(item.code || '')));
     const byNameNoCode = {};
-    db.products.forEach(p => { if (!p.code1c) byNameNoCode[p.name.trim().toLowerCase()] = p; });
+    db.products.forEach(p => {
+      if (!p.code1c || !incomingCodes.has(p.code1c)) byNameNoCode[p.name.trim().toLowerCase()] = p;
+    });
     let updated = 0, created = 0, linked = 0;
     incoming.forEach(item => {
       const existing = byCode[item.code];
@@ -1882,10 +1884,13 @@ if (p === '/api/ops' && req.method === 'GET') {
     const incoming = data.items || [];
     const byCode = {};
     db.clients.forEach(c => { if (c.code1c) byCode[c.code1c] = c; });
-    // также сматчим оставшиеся клиенты без code1c по точному имени — типичный случай:
-    // клиента завёл агент на сайте текстом, а в 1С он уже был создан раньше под тем же именем
+    // также сматчим оставшиеся клиенты по точному имени — и без code1c, и с ЧУЖИМ/устаревшим
+    // (например, от старой тестовой базы 1С), который не встречается в этой сверке.
+    const incomingCodes = new Set(incoming.map(item => String(item.code || '')));
     const byNameNoCode = {};
-    db.clients.forEach(c => { if (!c.code1c) byNameNoCode[c.name.toLowerCase()] = c; });
+    db.clients.forEach(c => {
+      if (!c.code1c || !incomingCodes.has(c.code1c)) byNameNoCode[c.name.toLowerCase()] = c;
+    });
     let updated = 0, created = 0, linked = 0;
     incoming.forEach(item => {
       const existing = byCode[item.code];
