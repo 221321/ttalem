@@ -33,6 +33,31 @@ const isCook = role => role === 'cook' || role.startsWith('cook_');
 // Торговый / экспедитор — не повар, но и не менеджер: продаёт, видит только своё, деньги/себестоимость не видит
 const isAgent = role => role === 'agent';
 
+// ---------- цеха (department) ----------
+// Один физический склад на всё (совпадает с 1С — там тоже один склад).
+// "Цех" — не отдельный запас, а просто метка на товаре: кто из поваров с ним работает.
+const MAIN_SK = 'sk1';
+const DEPARTMENTS = ['Кухня / Заготовки', 'Сэндвичи', 'Горячее', 'Хлеб и тесто', 'Кондитерка', 'Готовая продукция'];
+const DEFAULT_DEPARTMENT = 'Кухня / Заготовки';
+// какие цеха видит специализированная роль повара; если роли нет в списке — видит все цеха
+const ROLE_DEPARTMENTS = {
+  cook_prep:   ['Кухня / Заготовки'],
+  cook_sand:   ['Сэндвичи'],
+  cook_hot:    ['Горячее'],
+  cook_baker:  ['Хлеб и тесто'],
+  cook_pastry: ['Кондитерка'],
+};
+function canSeeDepartment(role, dept) {
+  if (role === 'admin' || role === 'tech' || role === 'cook' || role === 'cook_head') return true;
+  const allowed = ROLE_DEPARTMENTS[role];
+  return !allowed || allowed.includes(dept);
+}
+function departmentForType(type) {
+  if (type === 'dish') return 'Готовая продукция';
+  if (type === 'bread') return 'Хлеб и тесто';
+  return DEFAULT_DEPARTMENT;
+}
+
 // ---------- миграция ----------
 (function migrate() {
   let changed = false;
@@ -81,6 +106,39 @@ const isAgent = role => role === 'agent';
     }
     // единицы
     if (!VALID_UNITS.includes(p.unit)) { p.unit = 'кг'; changed = true; }
+  });
+
+  // ЕДИНЫЙ СКЛАД: если в базе ещё старые 6-7 складов — схлопываем их в один (MAIN_SK),
+  // а прежнее разделение по складам переносим в поле "department" (цех) — оно нужно
+  // только для того, чтобы повар видел свой участок, на физический остаток не влияет.
+  if (db.sklads.length > 1) {
+    changed = true;
+    const nameById = {};
+    db.sklads.forEach(sk => { nameById[sk.id] = sk.name; });
+    const mainSkPrev = db.sklads.find(sk => sk.is1cMain) || db.sklads[0];
+
+    db.products.forEach(p => {
+      if (!p.department) {
+        const name = nameById[p.skladId];
+        p.department = (name && p.skladId !== mainSkPrev.id) ? name : departmentForType(p.type);
+      }
+      p.skladId = MAIN_SK;
+    });
+
+    // остатки: суммируем по товару все склады в один MAIN_SK
+    Object.keys(db.stock).forEach(pid => {
+      const bySkl = db.stock[pid] || {};
+      let qty = 0, value = 0;
+      Object.values(bySkl).forEach(s => { qty += (s.qty || 0); value += (s.value || 0); });
+      db.stock[pid] = { [MAIN_SK]: { qty: Math.round(qty * 100) / 100, value: Math.round(value * 100) / 100 } };
+    });
+
+    db.sklads = [{ id: MAIN_SK, name: mainSkPrev.name || 'Основной склад', is1cMain: true, cookRoles: [] }];
+  }
+  // цех по умолчанию для товаров без него (новые базы / товары, добавленные после миграции)
+  db.products.forEach(p => {
+    if (!DEPARTMENTS.includes(p.department)) { p.department = departmentForType(p.type); changed = true; }
+    if (p.skladId !== MAIN_SK) { p.skladId = MAIN_SK; changed = true; }
   });
 
   if (Array.isArray(db.techcards) && db.techcards.length) {
@@ -169,16 +227,9 @@ const loginAttempts = {}; // ip -> { count, until }
 
 // ---------- склады ----------
 function sklad(id) { return db.sklads.find(s => s.id === id); }
-// склады, доступные роли повара
-function cookSklads(role) {
-  if (role === 'admin' || role === 'tech') return db.sklads;
-  if (role === 'cook_head' || role === 'cook') return db.sklads.filter(s => !s.is1cMain);
-  return db.sklads.filter(s => s.cookRoles && s.cookRoles.includes(role));
-}
-// продукты, доступные роли повара (через склад продукта)
+// продукты, доступные роли повара (через цех продукта)
 function cookProducts(role) {
-  const skIds = cookSklads(role).map(s => s.id);
-  return db.products.filter(p => skIds.includes(p.skladId));
+  return db.products.filter(p => canSeeDepartment(role, p.department));
 }
 
 // ---------- себестоимость ----------
@@ -265,7 +316,7 @@ function checkDiff(pid, factQty, accountQty) {
 function opReceipt(o) {
   const p = product(o.productId);
   if (!p) throw new Error('Продукт не найден');
-  const skId = o.skladId || p.skladId || 'sk1';
+  const skId = MAIN_SK;
   const s = stockOf(o.productId, skId);
   s.qty = r2(s.qty + o.qty);
   s.value = r2(s.value + o.qty * o.price);
@@ -278,8 +329,8 @@ function opProcessing(o) {
   if (!raw || !semi) throw new Error('Продукт не найден');
   if (!(o.qtyBefore > 0) || !(o.qtyAfter > 0)) throw new Error('Вес должен быть больше нуля');
   if (o.qtyAfter > o.qtyBefore) throw new Error('Вес ПОСЛЕ больше веса ДО');
-  const rawSkId = raw.skladId || 'sk2';
-  const semiSkId = semi.skladId || 'sk2';
+  const rawSkId = MAIN_SK;
+  const semiSkId = MAIN_SK;
   const sr = stockOf(o.rawId, rawSkId);
   if (sr.qty + 0.001 < o.qtyBefore) throw new Error('Недостаточно «' + raw.name + '» на складе: есть ' + sr.qty + ', требуется ' + o.qtyBefore + '. Сначала сделайте приход.');
   const uc = unitCost(o.rawId);
@@ -303,7 +354,7 @@ function opProduction(o) {
     const c = product(it.productId);
     const uc = unitCost(it.productId);
     const factor = (c && (c.unit === 'кг' || c.unit === 'л')) ? it.qty * o.count / 1000 : it.qty * o.count;
-    const skId = c ? (c.skladId || 'sk2') : 'sk2';
+    const skId = MAIN_SK;
     const s = stockOf(it.productId, skId);
     return { it, c, uc, factor, skId, s };
   });
@@ -319,7 +370,7 @@ function opProduction(o) {
     total += val;
     return { productId: x.it.productId, skladId: x.skId, qty: r2(x.factor), sum: val };
   });
-  const outSkId = p.skladId || 'sk7';
+  const outSkId = MAIN_SK;
   const sd = stockOf(o.productId, outSkId);
   sd.qty = r2(sd.qty + o.count);
   sd.value = r2(sd.value + total);
@@ -330,7 +381,7 @@ function opInventory(o, user) {
   const rows = [];
   const diffs = [];
   o.items.forEach(it => {
-    const s = stockOf(it.productId, it.skladId || product(it.productId)?.skladId || 'sk2');
+    const s = stockOf(it.productId, MAIN_SK);
     const accountQty = s.qty;
     const uc = unitCost(it.productId);
     const diff = r2(it.factQty - s.qty);
@@ -367,7 +418,7 @@ function opWriteoff(o) {
   const rows = o.items.map(it => {
     const p = product(it.productId);
     if (!p) throw new Error('Продукт не найден: ' + it.productId);
-    const skId = it.skladId || p.skladId || 'sk2';
+    const skId = MAIN_SK;
     const uc = unitCost(it.productId);
     const val = r2(uc * it.qty);
     const s = stockOf(it.productId, skId);
@@ -381,7 +432,7 @@ function opSale(o) {
   const p = product(o.productId);
   if (!p) throw new Error('Продукт не найден');
   if (!(o.qty > 0)) throw new Error('Количество должно быть больше нуля');
-  const skId = o.skladId || p.skladId || 'sk7';
+  const skId = MAIN_SK;
   const s = stockOf(o.productId, skId);
   if (s.qty + 0.001 < o.qty) throw new Error('Недостаточно «' + p.name + '» на складе: есть ' + r2(s.qty) + ', требуется ' + o.qty + '. Сначала сделайте выпуск.');
   const uc = unitCost(o.productId);
@@ -429,7 +480,7 @@ function opWaybill(o) {
     const p = product(it.productId);
     if (!p) throw new Error('Продукт не найден: ' + it.productId);
     if (!(+it.qty > 0)) throw new Error('Количество должно быть больше нуля: ' + p.name);
-    const skId = it.skladId || p.skladId || 'sk7';
+    const skId = MAIN_SK;
     const s = stockOf(it.productId, skId);
     if (s.qty + 0.001 < +it.qty) throw new Error('Недостаточно «' + p.name + '» на складе: есть ' + r2(s.qty) + ', требуется ' + it.qty);
     const uc = unitCost(it.productId);
@@ -590,24 +641,17 @@ function reportOutput(from, to, hideMoney) {
     })
   };
 }
-// остатки в разрезе продукт × склад
+// остатки по товару (один физический склад — MAIN_SK)
 function reportStock(role) {
-  const skIds = cookSklads(role).map(s => s.id);
   const showMoney = role === 'admin' || role === 'tech';
   const rows = [];
   db.products.forEach(p => {
-    if (!skIds.includes(p.skladId) && role !== 'admin' && role !== 'tech') return;
-    const bySkl = {};
-    let total = 0;
-    db.sklads.forEach(sk => {
-      const s = db.stock[p.id] && db.stock[p.id][sk.id];
-      const qty = s ? s.qty : 0;
-      const val = s ? s.value : 0;
-      if (qty !== 0) { bySkl[sk.id] = showMoney ? { qty, value: val } : { qty }; total = r2(total + qty); }
-    });
-    if (total !== 0 || Object.keys(bySkl).length) {
-      rows.push({ productId: p.id, name: p.name, type: p.type, unit: p.unit, skladId: p.skladId, total, bySkl });
-    }
+    if (!canSeeDepartment(role, p.department)) return;
+    const s = db.stock[p.id] && db.stock[p.id][MAIN_SK];
+    const qty = s ? s.qty : 0;
+    const value = s ? s.value : 0;
+    if (qty === 0) return;
+    rows.push({ productId: p.id, name: p.name, type: p.type, unit: p.unit, department: p.department, qty, value: showMoney ? value : undefined });
   });
   return rows;
 }
@@ -770,18 +814,11 @@ function buildReportCash(from, to) {
 
 function buildReportStock(role) {
   const rows = reportStock(role);
-  const flat = [];
-  rows.forEach(p => {
-    Object.keys(p.bySkl).forEach(skId => {
-      const sk = db.sklads.find(s => s.id === skId);
-      const c = p.bySkl[skId];
-      flat.push([p.name, p.type, p.unit, sk ? sk.name : skId, c.qty, c.value != null ? c.value : '']);
-    });
-  });
+  const flat = rows.map(p => [p.name, p.type, p.unit, p.department, p.qty, p.value != null ? p.value : '']);
   return {
-    title: 'Остатки на складах',
+    title: 'Остатки на складе',
     totals: [{ label: 'Позиций с остатком', value: rows.length }],
-    tables: [{ title: 'Остатки', headers: ['Товар', 'Тип', 'Ед', 'Склад', 'Кол-во', 'Сумма'], rows: flat }]
+    tables: [{ title: 'Остатки', headers: ['Товар', 'Тип', 'Ед', 'Цех', 'Кол-во', 'Сумма'], rows: flat }]
   };
 }
 
@@ -869,7 +906,7 @@ function export1c(date) {
   // перемещения (receipt: основной → склад продукта)
   const moved = {};
   dayOps.filter(o => o.type === 'receipt').forEach(o => {
-    const key = (o.skladId || 'sk1');
+    const key = MAIN_SK;
     if (!moved[key]) moved[key] = {};
     if (!moved[key][o.productId]) moved[key][o.productId] = { qty: 0, sum: 0 };
     moved[key][o.productId].qty = r2(moved[key][o.productId].qty + o.qty);
@@ -1329,7 +1366,7 @@ function route(req, res, u, data) {
     const np = {
       id: nid('p'), name: (data.name || '').trim(), type, unit: VALID_UNITS.includes(data.unit) ? data.unit : 'кг',
       priceKg: 0, sourceId: data.sourceId || null, code1c: isCook(role) ? '' : (data.code1c || ''),
-      skladId: data.skladId || (type === 'dish' ? 'sk7' : 'sk2'), salePrice: 0,
+      skladId: MAIN_SK, department: DEPARTMENTS.includes(data.department) ? data.department : departmentForType(type), salePrice: 0,
       recipe: (data.recipe || []).filter(it => it.qty > 0), recipeLog: [], lastCost: 0
     };
     if (!np.name) return json(res, 400, { error: 'Введите наименование' });
@@ -1355,7 +1392,7 @@ function route(req, res, u, data) {
     if (data.sourceId !== undefined) pr.sourceId = (data.sourceId && data.sourceId !== pr.id) ? data.sourceId : null;
     if (data.code1c !== undefined) pr.code1c = data.code1c;
     if (data.salePrice !== undefined && !isCook(role)) pr.salePrice = +data.salePrice || 0;
-    if (data.skladId !== undefined) pr.skladId = data.skladId;
+    if (data.department !== undefined && DEPARTMENTS.includes(data.department)) pr.department = data.department;
     if (cleanRecipe !== undefined) pr.recipe = cleanRecipe;
     if (pr.recipe.length && !pr.recipeStatus) pr.recipeStatus = 'draft';
     save();
@@ -1397,7 +1434,7 @@ function route(req, res, u, data) {
     if (data.type === 'receipt' && isCook(role)) return json(res, 403, { error: 'Нет прав' });
     if (data.type === 'inventory' && !isAdmin) return json(res, 403, { error: 'Инвентаризацию проводит директор' });
     if (data.type === 'writeoff' && isCook(role)) return json(res, 403, { error: 'Акт списания оформляет менеджер или директор' });
-    if (data.type === 'move' && isCook(role) && role !== 'cook_head') return json(res, 403, { error: 'Перемещение делает менеджер' });
+    if (data.type === 'move') return json(res, 400, { error: 'Перемещение между складами отключено — теперь один физический склад' });
     if (data.type === 'sale' && isCook(role)) return json(res, 403, { error: 'Продажу оформляет менеджер или директор' });
     const fn = OPS[data.type];
     if (!fn) return json(res, 400, { error: 'Неизвестная операция' });
@@ -1889,7 +1926,7 @@ if (p === '/api/ops' && req.method === 'GET') {
       if (byName) { byName.code1c = item.code; linked++; return; }
       if (data.createMissing) {
         const nid2 = nid('p');
-        db.products.push({ id: nid2, name: item.name, type: 'raw', unit: item.unit || 'г', priceKg: 0, sourceId: null, code1c: item.code, recipe: [], recipeLog: [], lastCost: 0, skladId: 'sk2' });
+        db.products.push({ id: nid2, name: item.name, type: 'raw', unit: item.unit || 'г', priceKg: 0, sourceId: null, code1c: item.code, recipe: [], recipeLog: [], lastCost: 0, skladId: MAIN_SK, department: DEFAULT_DEPARTMENT });
         created++;
       }
     });
