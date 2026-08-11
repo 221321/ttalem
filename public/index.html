@@ -123,7 +123,7 @@ var pin = '', pickedUser = null;
 var exp = {}, busy = false;
 var wSel = null, wDone = null, wQ = '';
 var pCnt = {}, pDate = null, pFrom = null, pTo = null;
-var stockTab = 'raw', nomTab = 'raw', recFilter = 'all';
+var stockTabDept = '', nomTab = 'raw', recFilter = 'all';
 var outFrom = null, outTo = null;
 var lossFrom = null, lossTo = null;
 var syncDate = null, rcptOpen = false;
@@ -146,7 +146,7 @@ var app = $('#app');
 var fmt = function(n){ return (Math.round((+n||0)*100)/100).toLocaleString('ru-RU'); };
 var money = function(n){ return fmt(n) + ' ₸'; };
 var today = function(){ return new Date().toISOString().slice(0,10); };
-var P = function(id){ return D.products.find(function(p){ return p.id===id; }) || {name:'?',unit:'',recipe:[],type:'raw',skladId:'sk2'}; };
+var P = function(id){ return D.products.find(function(p){ return p.id===id; }) || {name:'?',unit:'',recipe:[],type:'raw',department:'Кухня / Заготовки'}; };
 var SK = function(id){ return (D.sklads||[]).find(function(s){ return s.id===id; }) || {name:id||'—'}; };
 var esc = function(s){ return String(s==null?'':s).replace(/[&<>"]/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); };
 var ROLE = {cook:'повар',cook_prep:'повар заготовок',cook_sand:'повар сэндвичей',cook_hot:'повар горячего',cook_baker:'пекарь',cook_pastry:'кондитер',cook_head:'главный повар',tech:'менеджер',admin:'директор',agent:'торговый / водитель'};
@@ -160,6 +160,8 @@ var CATS = [
   {id:'dish',icon:'🥪',name:'Готовые блюда'}
 ];
 var CAT = function(id){ return CATS.find(function(c){ return c.id===id; }) || {icon:'📦',name:id||''}; };
+// Цеха — один физический склад на все товары (совпадает с 1С), цех — просто метка "кто с этим товаром работает"
+var DEPARTMENTS = ['Кухня / Заготовки','Сэндвичи','Горячее','Хлеб и тесто','Кондитерка','Готовая продукция'];
 var UNITS = ['кг','г','шт','л','мл'];
 var ST = {
   draft:'<span class="pill warn">✏️ черновик</span>',
@@ -176,7 +178,7 @@ async function api(path,method,body){
   return j;
 }
 function logout(){ TOKEN='';ME=null;sessionStorage.clear();pickedUser=null;pin='';render(); }
-async function reload(){ D=await api('/bootstrap'); if(!stockTab&&D.sklads&&D.sklads.length) stockTab=D.sklads[0].id; }
+async function reload(){ D=await api('/bootstrap'); }
 function opTime(o){ return new Date(o.ts).toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'}); }
 function filterList(list,q){ var lo=q.toLowerCase(); return lo?list.filter(function(p){ return p.name.toLowerCase().includes(lo); }):list; }
 
@@ -228,7 +230,7 @@ var NAVS={
   cook_hot:  [['work','⚖️','Обработка'],['prod','🥪','Выпуск'],['nom','🏷️','Продукты'],['stock','📋 ','Остатки']],
   cook_baker:[['work','⚖️','Обработка'],['prod','🥪','Выпуск'],['nom','🏷️','Продукты'],['stock','📋 ','Остатки']],
   cook_pastry:[['work','⚖️','Обработка'],['prod','🥪','Выпуск'],['nom','🏷️','Продукты'],['stock','📋 ','Остатки']],
-  cook_head: [['work','⚖️','Обработка'],['prod','🥪','Выпуск'],['nom','🏷️','Продукты'],['stock','📋 ','Остатки'],['move','🔄','Переместить']],
+  cook_head: [['work','⚖️','Обработка'],['prod','🥪','Выпуск'],['nom','🏷️','Продукты'],['stock','📋 ','Остатки']],
   agent:     [['agent','🚚','Продажи']],
   tech:      [['orders','📝','Заказы'],['nom','🏷️','Продукты'],['wo','🧂','Специи'],['output','📊',  'Выработка'],['stock','📋','Остатки'],['reports','📈','Отчёты']],
   admin:     [['orders','📝','Заказы'],['sales','💵','Продажи'],['cost','💰','Калькуляция'],['output','📊','Выработка'],['stock','📋','Остатки'],['losses','📉','Потери'],['reports','📈','Отчёты'],['sync','🔄','1С'],['users','🔒','Доступы']]
@@ -463,7 +465,7 @@ function scrNom(){
   return tabsHtml+searchHtml+'<div class="nomlist">'+items+'</div>'+'<button class="btn" onclick="nomEdit(null)">+ Добавить позицию</button>';
 }
 window.nomEdit=function(id){
-  var p=id?P(id):{name:'',type:nomTab,unit:nomTab==='dish'?'шт':'кг',sourceId:'',code1c:'',skladId:nomTab==='dish'?'sk7':'sk2',recipe:[]};
+  var p=id?P(id):{name:'',type:nomTab,unit:nomTab==='dish'?'шт':'кг',sourceId:'',code1c:'',department:nomTab==='dish'?'Готовая продукция':(nomTab==='bread'?'Хлеб и тесто':'Кухня / Заготовки'),recipe:[]};
   editRecipe=JSON.parse(JSON.stringify(p.recipe||[]));
   drawNomEdit(id,p);
 };
@@ -472,7 +474,7 @@ function drawNomEdit(id,p){
   var locked=id&&hasRecipe(p)&&(p.recipeStatus==='approved')&&ME.role!=='admin';
   var catOpts=CATS.map(function(c){ return '<option value="'+c.id+'" '+(p.type===c.id?'selected':'')+'>'+c.icon+' '+c.name+'</option>'; }).join('');
   var unitOpts=UNITS.map(function(u){ return '<option '+(p.unit===u?'selected':'')+'>'+u+'</option>'; }).join('');
-  var sklOpts=(D.sklads||[]).map(function(s){ return '<option value="'+s.id+'" '+(p.skladId===s.id?'selected':'')+'>'+esc(s.name)+'</option>'; }).join('');
+  var deptOpts=DEPARTMENTS.map(function(d){ return '<option value="'+esc(d)+'" '+(p.department===d?'selected':'')+'>'+esc(d)+'</option>'; }).join('');
   var srcOpts='<option value="">— не используется —</option>'+procs.map(function(r){ return '<option value="'+r.id+'" '+(p.sourceId===r.id?'selected':'')+'>'+esc(r.name)+'</option>'; }).join('');
   var rows=editRecipe.map(function(it,i){
     var c=P(it.productId);
@@ -486,7 +488,7 @@ function drawNomEdit(id,p){
     +'<label>Наименование</label><input id="gn" value="'+esc(p.name)+'" '+(locked?'disabled':'')+' >'
     +'<div class="row"><div><label>Категория</label><select id="gt">'+catOpts+'</select></div>'
     +'<div><label>Единица</label><select id="gu">'+unitOpts+'</select></div></div>'
-+'<label>Склад</label><select id="gsk">'+sklOpts+'</select>'
++'<label>Цех</label><select id="gdept">'+deptOpts+'</select>'
     +(isCook(ME.role)?'':'<label>Исходный продукт (только для Выработки ⚖️ — пары «сырьё → обработанное»)</label><select id="gs">'+srcOpts+'</select>')
     +(isCook(ME.role)?'':'<label>Код в 1С (заполняет менеджер)</label><input id="gc" value="'+esc(p.code1c||'')+'">')
     +'</div>'
@@ -510,7 +512,7 @@ window.nomRecSearch=function(q,id){
 function collectNomRec(){ document.querySelectorAll('[data-rq]').forEach(function(el){ editRecipe[+el.dataset.rq].qty=+el.value||0; }); }
 function collectNomForm(id){
   return {name:$('#gn')?$('#gn').value:'',type:$('#gt')?$('#gt').value:nomTab,unit:$('#gu')?$('#gu').value:'кг',
-    skladId:$('#gsk')?$('#gsk').value:'sk2',sourceId:$('#gs')?$('#gs').value:'',code1c:$('#gc')?$('#gc').value:'',recipe:editRecipe};
+    department:$('#gdept')?$('#gdept').value:'Кухня / Заготовки',sourceId:$('#gs')?$('#gs').value:'',code1c:$('#gc')?$('#gc').value:'',recipe:editRecipe};
 }
 window.nomAddRow=function(pid,id){
   collectNomRec();
@@ -542,7 +544,7 @@ window.stClear=function(){
 };
   window.nomSave=async function(id){
   collectNomRec();
-  var body={type:$('#gt').value,unit:$('#gu').value,skladId:$('#gsk')?$('#gsk').value:'sk2',recipe:editRecipe.filter(function(it){ return it.qty>0; })};
+  var body={type:$('#gt').value,unit:$('#gu').value,department:$('#gdept')?$('#gdept').value:'Кухня / Заготовки',recipe:editRecipe.filter(function(it){ return it.qty>0; })};
   if($('#gs')) body.sourceId=$('#gs').value||null;
   if($('#gc')) body.code1c=$('#gc').value.trim();
   if(!$('#gn').disabled) body.name=$('#gn').value.trim();
@@ -554,67 +556,67 @@ window.stClear=function(){
 };
 
 // ====== ОСТАТКИ ======
+// Один физический склад — цех тут только группирует список для удобства просмотра,
+// на сумму/количество товара не влияет (это не разные "корзины" остатка).
 async function scrStock(){
   var showMoney=ME.role==='admin';
   var stockData=await api('/report/stock');
-  var skls=(D.sklads||[]).filter(function(s){ return !s.is1cMain; });
-  if(!stockTab||!skls.find(function(s){ return s.id===stockTab; })) stockTab=skls[0]?skls[0].id:'';
   var isMgrAdmin=ME.role==='admin'||ME.role==='tech';
   if(isMgrAdmin){
     var byType={};
     stockData.forEach(function(r){ if(!byType[r.type]) byType[r.type]=[]; byType[r.type].push(r); });
     var totalVal=0;
-    if(showMoney) stockData.forEach(function(r){ Object.values(r.bySkl||{}).forEach(function(s){ totalVal+=s.value||0; }); });
+    if(showMoney) stockData.forEach(function(r){ totalVal+=r.value||0; });
     var header=showMoney?'<div class="card" style="display:flex;justify-content:space-between"><span>Стоимость всех остатков</span><b>'+money(totalVal)+'</b></div>':'';
     var body=CATS.filter(function(cat){ return byType[cat.id]; }).map(function(cat){
       return card('stcat'+cat.id,
         '<span style="flex:1"><b>'+cat.icon+' '+cat.name+'</b> <span class="sub">'+byType[cat.id].length+' позиций</span></span>',
         '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:13px">'
         +'<tr><th style="text-align:left;padding:6px;border-bottom:1px solid var(--line)">Продукт</th>'
-        +skls.map(function(s){ return '<th style="text-align:right;padding:6px;border-bottom:1px solid var(--line)">'+esc(s.name)+'</th>'; }).join('')
+        +'<th style="text-align:left;padding:6px;border-bottom:1px solid var(--line)">Цех</th>'
+        +'<th style="text-align:right;padding:6px;border-bottom:1px solid var(--line)">Кол-во</th>'
         +(showMoney?'<th style="text-align:right;padding:6px;border-bottom:1px solid var(--line)">Сумма</th>':'')
         +'</tr>'
         +byType[cat.id].map(function(r){
-          var rowSum=Object.values(r.bySkl||{}).reduce(function(a,s){ return a+s.value; },0);
           return '<tr><td style="padding:6px;border-bottom:1px solid var(--line)">'+esc(r.name)+'</td>'
-            +skls.map(function(s){ var sl=r.bySkl&&r.bySkl[s.id]; var qty=sl?sl.qty:0; return '<td style="text-align:right;padding:6px;border-bottom:1px solid var(--line);color:'+(qty<0?'var(--red)':qty>0?'var(--acc)':'inherit')+'">'+( qty?fmt(qty)+' '+r.unit:'—')+'</td>'; }).join('')
-            +(showMoney?'<td style="text-align:right;padding:6px;border-bottom:1px solid var(--line)">'+money(rowSum)+'</td>':'')
+            +'<td style="padding:6px;border-bottom:1px solid var(--line)" class="sub">'+esc(r.department||'')+'</td>'
+            +'<td style="text-align:right;padding:6px;border-bottom:1px solid var(--line);color:'+(r.qty<0?'var(--red)':'var(--acc)')+'">'+fmt(r.qty)+' '+r.unit+'</td>'
+            +(showMoney?'<td style="text-align:right;padding:6px;border-bottom:1px solid var(--line)">'+money(r.value||0)+'</td>':'')
             +'</tr>';
         }).join('')+'</table></div>'
       );
     }).join('') || '<p class="sub">Остатков нет.</p>';
     return header+body+'<button class="btn sec" style="margin-top:8px" onclick="go(\'inv\')">Инвентаризация</button>';
   }
-var filtered=stockData.filter(function(r){ return !stockTab||(r.bySkl&&r.bySkl[stockTab]); });
-  var tabsHtml='<div class="tabbar">'+skls.map(function(s){ return '<button class="'+(stockTab===s.id?'on':'')+'" onclick="stockTab=\''+s.id+'\';renderInPlace()">'+esc(s.name)+'</button>'; }).join('')+'<button class="'+(stockTab===''?'on':'')+'" onclick="stockTab=\'\';renderInPlace()">Все</button></div>';
+  var depts=DEPARTMENTS.filter(function(d){ return stockData.some(function(r){ return r.department===d; }); });
+  if(!stockTabDept||(depts.length&&depts.indexOf(stockTabDept)===-1)) stockTabDept=depts.length>1?'':'';
+  var filtered=stockData.filter(function(r){ return !stockTabDept||r.department===stockTabDept; });
+  var tabsHtml=depts.length>1?'<div class="tabbar">'+depts.map(function(d){ return '<button class="'+(stockTabDept===d?'on':'')+'" onclick="stockTabDept=\''+esc(d)+'\';renderInPlace()">'+esc(d)+'</button>'; }).join('')+'<button class="'+(stockTabDept===''?'on':'')+'" onclick="stockTabDept=\'\';renderInPlace()">Все</button></div>':'';
   var searchHtml='<div class="search"><input id="stockSearch" placeholder="Найти продукт..." oninput="stSearch(this.value)" autocomplete="off"><span class="clr" onclick="stClear()">✕</span></div>';
   return tabsHtml+searchHtml+'<div class="card stocklist">'+filtered.map(function(r){
-    var qty=stockTab?(r.bySkl&&r.bySkl[stockTab]?r.bySkl[stockTab].qty:0):r.total.qty;
-    return '<div class="li stock-item" data-name="'+esc(r.name.toLowerCase())+'"><span class="nm">'+CAT(r.type).icon+' '+esc(r.name)+'</span><span class="vl '+(qty<0?'neg':'')+'">'+fmt(qty)+' '+r.unit+'</span></div>';
+    return '<div class="li stock-item" data-name="'+esc(r.name.toLowerCase())+'"><span class="nm">'+CAT(r.type).icon+' '+esc(r.name)+'</span><span class="vl '+(r.qty<0?'neg':'')+'">'+fmt(r.qty)+' '+r.unit+'</span></div>';
   }).join('')+'</div>';
 }
 
-var invSk=null, invVals={};
+// Цех тут — просто фильтр списка для удобства физического пересчёта (считаешь полку за полкой),
+// сама инвентаризация всегда пишется на единственный физический склад.
+var invDept=null, invVals={};
 async function scrInv(){
-  var skls=(D.sklads||[]).filter(function(s){ return !s.is1cMain; });
-  if(!invSk||!skls.find(function(s){ return s.id===invSk; })) invSk=skls[0]?skls[0].id:'';
+  var depts=DEPARTMENTS.filter(function(d){ return D.products.some(function(p){ return p.department===d; }); });
+  if(!invDept||depts.indexOf(invDept)===-1) invDept=depts[0]||'';
   var isAdmin=ME.role==='admin';
-  var tabsHtml='<div class="tabbar">'+skls.map(function(s){ return '<button class="'+(invSk===s.id?'on':'')+'" onclick="invSk=\''+s.id+'\';invVals={};renderInPlace()">'+esc(s.name)+'</button>'; }).join('')+'</div>';
-  var rows=D.products.filter(function(p){
-    var st=D.stock[p.id];
-    var hasHere=st&&st.bySklad&&st.bySklad[invSk]&&st.bySklad[invSk].qty;
-    return p.skladId===invSk||hasHere;
-  });
+  var tabsHtml=depts.length>1?'<div class="tabbar">'+depts.map(function(d){ return '<button class="'+(invDept===d?'on':'')+'" onclick="invDept=\''+esc(d)+'\';invVals={};renderInPlace()">'+esc(d)+'</button>'; }).join('')+'</div>':'';
+  var rows=D.products.filter(function(p){ return p.department===invDept; });
   var listHtml=rows.map(function(p){
     var st=D.stock[p.id];
-    var cur=st&&st.bySklad&&st.bySklad[invSk]?st.bySklad[invSk].qty:0;
+    var cur=st&&st.total?st.total.qty:0;
     var val=invVals.hasOwnProperty(p.id)?invVals[p.id]:cur;
     return '<div class="li"><span class="nm">'+CAT(p.type).icon+' '+esc(p.name)+'<div class="sub">учёт: '+fmt(cur)+' '+p.unit+'</div></span>'
       +(isAdmin
         ?'<input type="number" step="0.01" inputmode="decimal" value="'+val+'" style="width:100px;text-align:center" onfocus="this.select()" onchange="invChange(\''+p.id+'\',this.value)">'
         :'<span class="vl">'+fmt(cur)+' '+p.unit+'</span>')
       +'</div>';
-  }).join('') || '<p class="sub">Нет позиций на этом складе.</p>';
+  }).join('') || '<p class="sub">Нет позиций в этом цехе.</p>';
   var saveBtn=isAdmin?'<button class="btn" style="margin-top:10px" onclick="invSave()">Сохранить инвентаризацию</button>':'';
   var hist='';
   if(isAdmin||ME.role==='tech'){
@@ -632,7 +634,7 @@ async function scrInv(){
   }
   return '<h2>Инвентаризация</h2>'
     +(isAdmin
-      ?'<p class="sub" style="margin-bottom:10px">Выберите склад, поправьте фактические остатки и сохраните — разница спишется или оприходуется автоматически.</p>'
+      ?'<p class="sub" style="margin-bottom:10px">Выберите цех, поправьте фактические остатки и сохраните — разница спишется или оприходуется автоматически.</p>'
       :'<p class="sub" style="margin-bottom:10px">Просмотр остатков. Сохранять инвентаризацию может только директор.</p>')
     +tabsHtml
     +'<div class="card">'+listHtml+'</div>'
@@ -642,9 +644,10 @@ async function scrInv(){
 window.invChange=function(pid,v){ invVals[pid]=v===''?'':(+v); };
 window.invSave=async function(){
   if(busy) return;
-  var items=Object.keys(invVals).filter(function(pid){ return invVals[pid]!==''&&invVals[pid]!=null; }).map(function(pid){ return {productId:pid,skladId:invSk,factQty:+invVals[pid]}; });
+  var mainSkId=(D.sklads&&D.sklads[0]?D.sklads[0].id:'sk1');
+  var items=Object.keys(invVals).filter(function(pid){ return invVals[pid]!==''&&invVals[pid]!=null; }).map(function(pid){ return {productId:pid,skladId:mainSkId,factQty:+invVals[pid]}; });
   if(!items.length) return toast('Измените хотя бы одно значение');
-  if(!confirm('Сохранить инвентаризацию по складу «'+esc(SK(invSk).name)+'»? Позиций: '+items.length+'.')) return;
+  if(!confirm('Сохранить инвентаризацию по цеху «'+esc(invDept)+'»? Позиций: '+items.length+'.')) return;
   try{
     busy=true;
     await api('/ops','POST',{type:'inventory',items:items});
@@ -659,7 +662,7 @@ function scrWo(){
   var filteredWo=filterList(raws,woQ);
   var itemsHtml=woItems.map(function(it,i){
     var c=P(it.productId);
-    return '<div class="li"><span class="nm">'+esc(c.name)+' <span class="sub">'+esc(SK(c.skladId).name)+'</span></span>'
+    return '<div class="li"><span class="nm">'+esc(c.name)+' <span class="sub">'+esc(c.department||'')+'</span></span>'
       +'<input type="number" step="0.01" inputmode="decimal" value="'+it.qty+'" data-wq="'+i+'" style="width:88px;text-align:center" onchange="collectWo()">'
       +'<button class="btn sec sm" onclick="woDel('+i+')">✕</button></div>';
   }).join('');
@@ -1718,38 +1721,8 @@ window.clientsApply=async function(){
   }catch(e){ toast(e.message); }
 };
 
-// ====== ПЕРЕМЕЩЕНИЕ ======
-var movePid=null, moveQ='', moveFrom='', moveTo='';
-function scrMove(){
-  var prods=D.products.filter(function(p){ return p.type!=='dish'; });
-  var filtered=filterList(prods,moveQ);
-  var skls=(D.sklads||[]).filter(function(s){ return !s.is1cMain; });
-  return '<h2>🔄 Перемещение между складами</h2>'
-    +'<div class="search"><input placeholder="Найти продукт..." oninput="mvSearch(this.value)" autocomplete="off"></div>'
-    +'<div id="mvlist"></div>'
-    +(movePid?'<div class="card"><b>'+esc(P(movePid).name)+'</b> <button class="btn sec sm" style="display:inline-block;margin-left:8px" onclick="movePid=null;renderInPlace()">✕</button>'
-      +'<div class="row"><div><label>Откуда</label><select id="mfrom">'+skls.map(function(s){ return '<option value="'+s.id+'">'+esc(s.name)+'</option>'; }).join('')+'</select></div>'
-      +'<div><label>Куда</label><select id="mto">'+skls.map(function(s){ return '<option value="'+s.id+'">'+esc(s.name)+'</option>'; }).join('')+'</select></div></div>'
-      +'<label>Количество, '+esc(P(movePid).unit)+'</label><input class="big" id="mqty" type="number" step="0.01" inputmode="decimal">'
-      +'<div style="height:10px"></div><button class="btn" onclick="moveSave()">Переместить</button></div>':'');
-}
-window.mvSearch=function(q){
-  var el=$('#mvlist'); if(!el) return;
-  if(!q||movePid){ el.innerHTML=''; return; }
-  var prods=D.products.filter(function(p){ return p.type!=='dish'; });
-  var res=filterList(prods,q).slice(0,8);
-  el.innerHTML='<div class="srlist">'+(res.map(function(p){ return '<div class="sritem" onclick="movePid=\''+p.id+'\';history.pushState({},\'\');renderInPlace()">'+CAT(p.type).icon+' '+esc(p.name)+'</div>'; }).join('')||'<div class="sritem sub">Ничего</div>')+'</div>';
-};
-window.moveSave=async function(){
-  var qty=+$('#mqty').value, from=$('#mfrom').value, to=$('#mto').value;
-  if(!(qty>0)) return toast('Введите количество');
-  if(from===to) return toast('Склады совпадают');
-  try{ await api('/ops','POST',{type:'move',productId:movePid,fromSkId:from,toSkId:to,qty:qty}); toast('✅ Перемещено'); movePid=null; moveQ=''; await reload(); renderInPlace(); }
-  catch(e){ toast(e.message); }
-};
-
 // ====== РОУТЕР ======
-var SCREENS={work:scrWork,prod:scrProd,stock:scrStock,inv:scrInv,cost:scrCost,output:scrOutput,sync:scrSync,nom:scrNom,wo:scrWo,move:scrMove,orders:scrOrders,users:scrUsers,losses:scrLosses,sales:scrSales,agent:scrAgent,reports:scrReports};
+var SCREENS={work:scrWork,prod:scrProd,stock:scrStock,inv:scrInv,cost:scrCost,output:scrOutput,sync:scrSync,nom:scrNom,wo:scrWo,orders:scrOrders,users:scrUsers,losses:scrLosses,sales:scrSales,agent:scrAgent,reports:scrReports};
 async function render(){
   if(!ME) return renderLogin();
   var fn=SCREENS[screen]||scrStock;
@@ -1760,7 +1733,7 @@ async function render(){
     catch(e){ $('#m').innerHTML='<p class="sub">'+esc(e.message)+'</p>'; }
   }
 }
-  window.addEventListener('popstate', function(){ wSel=null; movePid=null; renderInPlace(); });
+  window.addEventListener('popstate', function(){ wSel=null; renderInPlace(); });
 (async function(){
   if(ME){ try{ await reload(); }catch(e){ logout(); return; } }
   render();
