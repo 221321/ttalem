@@ -1751,8 +1751,9 @@ if (p === '/api/ops' && req.method === 'GET') {
       if (!pr) { notInSkyMeal.push({ code, qty1c: item.qty, name: item.name || '' }); return; }
       const ourQty = totalStock(pr.id).qty;
       const diff = r2((+item.qty || 0) - ourQty);
+      const cost1c = item.cost != null ? +item.cost || 0 : null;
       if (Math.abs(diff) > 0.01) {
-        mismatches.push({ productId: pr.id, name: pr.name, code, qty1c: item.qty, qtySkyMeal: ourQty, diff });
+        mismatches.push({ productId: pr.id, name: pr.name, code, qty1c: item.qty, qtySkyMeal: ourQty, diff, cost: cost1c });
       } else {
         matchedSame++;
       }
@@ -1812,6 +1813,9 @@ if (p === '/api/ops' && req.method === 'GET') {
   }
 
   // ---------- применение сверки остатков: подтягиваем факт из 1С на основной склад (is1cMain) ----------
+  // Количество и учётную цену берём из 1С напрямую (item.cost) — не пытаемся высчитать цену
+  // из уже имеющегося на сайте остатка: для товара, у которого на сайте остаток был 0,
+  // unitCost() тоже вернёт 0, и сумма навсегда останется нулевой, даже если qty подтянулось.
   if (p === '/api/1c/stock-apply' && req.method === 'POST') {
     if (!isAdmin) return json(res, 403, { error: 'Только директор' });
     const incoming = data.items || [];
@@ -1827,13 +1831,16 @@ if (p === '/api/ops' && req.method === 'GET') {
       if (!pr) return; // нет в SkyMeal — сначала сверка/создание номенклатуры
       const s = stockOf(pr.id, mainSk.id);
       const accountQty = s.qty;
-      const uc = unitCost(pr.id);
       const factQty = +item.qty || 0;
+      // цена из 1С, если прислана; иначе (старые вызовы БСЛ без cost) — как раньше, от текущего unitCost
+      const cost1c = item.cost != null ? +item.cost || 0 : null;
+      const uc = cost1c != null ? cost1c : unitCost(pr.id);
       const diff = r2(factQty - accountQty);
       const diffSum = r2(diff * uc);
       checkDiff(pr.id, factQty, accountQty);
-      s.value = r2(Math.max(0, s.value + diffSum));
       s.qty = factQty;
+      s.value = cost1c != null ? r2(factQty * cost1c) : r2(Math.max(0, s.value + diffSum));
+      if (cost1c != null && cost1c > 0) pr.lastCost = cost1c;
       rows.push({ productId: pr.id, skladId: mainSk.id, accountQty, factQty, diff, diffSum });
     });
     const total = r2(rows.reduce((a, r) => a + r.diffSum, 0));
