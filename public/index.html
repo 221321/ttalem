@@ -1409,10 +1409,12 @@ async function scrSync(){
         +'<div class="stocklist">'+sd.notIn1c.map(function(it){ return '<div class="li"><span class="nm">'+esc(it.name)+'<div class="sub">код '+esc(it.code)+' · у нас: '+fmt(it.qtySkyMeal)+'</div></span></div>'; }).join('')+'</div>';
     }
     if((!sd.mismatches||!sd.mismatches.length)&&(!sd.notInSkyMeal||!sd.notInSkyMeal.length)&&(!sd.notIn1c||!sd.notIn1c.length)){
-      stHtml+='<p class="sub" style="margin-top:8px">Расхождений нет.</p>';
+      stHtml+='<p class="sub" style="margin-top:8px">Расхождений по количеству нет.</p>';
     }
-    if(sd.mismatches&&sd.mismatches.length){
+    if(sd.allItems&&sd.allItems.length){
       stHtml+='<div style="height:8px"></div><button class="btn grn" onclick="stApply()">Применить сверку (обновить остатки)</button>';
+    } else if(sd.totalIncoming>0){
+      stHtml+='<div style="height:8px"></div><p class="sub">Пакет сверки старый (до обновления) — нажмите «Отправить остатки» в 1С ещё раз, потом обновите эту страницу.</p>';
     }
   } else {
     stHtml+='<p class="sub" style="margin-top:6px">Сверки ещё не было — либо 1С ещё не присылала остатки, либо проверьте вручную ниже.</p>';
