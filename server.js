@@ -1741,6 +1741,12 @@ if (p === '/api/ops' && req.method === 'GET') {
     db.products.forEach(p => { if (p.code1c) byCode[p.code1c] = p; });
     const seenCodes = new Set();
     const mismatches = [];
+    // allItems — полный список признанных позиций (code/qty/cost) для каждой из incoming,
+    // которая нашлась в SkyMeal по коду. Нужен отдельно от mismatches: если количество уже
+    // совпало (например, применили раньше без цены), позиция уйдёт в matchedSame и никогда
+    // не попадёт в mismatches — а значит "Применить сверку" никогда не подтянет для неё цену,
+    // если брать items только из mismatches. Поэтому "Применить сверку" применяет allItems целиком.
+    const allItems = [];
     let matchedSame = 0;
     const notInSkyMeal = [];
     incoming.forEach(item => {
@@ -1752,6 +1758,7 @@ if (p === '/api/ops' && req.method === 'GET') {
       const ourQty = totalStock(pr.id).qty;
       const diff = r2((+item.qty || 0) - ourQty);
       const cost1c = item.cost != null ? +item.cost || 0 : null;
+      allItems.push({ code, qty: item.qty, cost: cost1c });
       if (Math.abs(diff) > 0.01) {
         mismatches.push({ productId: pr.id, name: pr.name, code, qty1c: item.qty, qtySkyMeal: ourQty, diff, cost: cost1c });
       } else {
@@ -1765,7 +1772,7 @@ if (p === '/api/ops' && req.method === 'GET') {
         if (Math.abs(ourQty) > 0.01) notIn1c.push({ productId: pr.id, name: pr.name, code: pr.code1c, qtySkyMeal: ourQty });
       }
     });
-    const result = { matchedSame, mismatches, notInSkyMeal, notIn1c };
+    const result = { matchedSame, mismatches, notInSkyMeal, notIn1c, allItems };
     db.lastStockDiff = Object.assign({ ts: new Date().toISOString(), totalIncoming: incoming.length }, result);
     save();
     return json(res, 200, result);
