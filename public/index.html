@@ -1640,7 +1640,7 @@ window.stApply=async function(){
   try{
     var sd=await api('/1c/stock-diff');
     if(!sd) return toast('Нет данных сверки');
-    var items=(sd.mismatches||[]).map(function(m){ return {code:m.code,qty:m.qty1c}; });
+    var items=(sd.mismatches||[]).map(function(m){ return {code:m.code,qty:m.qty1c,cost:m.cost}; });
     if(!items.length) return toast('Нет расхождений для применения');
     var r=await api('/1c/stock-apply','POST',{items:items});
     toast('✅ Применено: '+r.applied); await reload(); render();
