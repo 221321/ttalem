@@ -233,7 +233,7 @@ var NAVS={
   cook_pastry:[['prod','🥪','Выпуск'],['nom','🏷️','Продукты'],['stock','📋 ','Остатки']],
   cook_head: [['prod','🥪','Выпуск'],['nom','🏷️','Продукты'],['stock','📋 ','Остатки']],
   agent:     [['agent','🚚','Продажи']],
-  tech:      [['orders','📝','Заказы'],['nom','🏷️','Продукты'],['wo','🧂','Специи'],['output','📊',  'Выработка'],['stock','📋','Остатки'],['reports','📈','Отчёты']],
+  tech:      [['prod','🥪','Выпуск'],['orders','📝','Заказы'],['nom','🏷️','Продукты'],['wo','🧂','Специи'],['output','📊',  'Выработка'],['stock','📋','Остатки'],['reports','📈','Отчёты']],
   admin:     [['orders','📝','Заказы'],['sales','💵','Продажи'],['cost','💰','Калькуляция'],['output','📊','Выработка'],['stock','📋','Остатки'],['losses','📉','Потери'],['reports','📈','Отчёты'],['sync','🔄','1С'],['users','🔒','Доступы']]
 };
 function shell(inner){
@@ -592,13 +592,18 @@ async function scrStock(){
     return header+body+'<button class="btn sec" style="margin-top:8px" onclick="go(\'inv\')">Инвентаризация</button>';
   }
   var depts=DEPARTMENTS.filter(function(d){ return stockData.some(function(r){ return r.department===d; }); });
-  if(!stockTabDept||(depts.length&&depts.indexOf(stockTabDept)===-1)) stockTabDept=depts.length>1?'':'';
-  var filtered=stockData.filter(function(r){ return !stockTabDept||r.department===stockTabDept; });
-  var tabsHtml=depts.length>1?'<div class="tabbar">'+depts.map(function(d){ return '<button class="'+(stockTabDept===d?'on':'')+'" onclick="stockTabDept=\''+esc(d)+'\';renderInPlace()">'+esc(d)+'</button>'; }).join('')+'<button class="'+(stockTabDept===''?'on':'')+'" onclick="stockTabDept=\'\';renderInPlace()">Все</button></div>':'';
+  var byTypeCook={};
+  stockData.forEach(function(r){ if(!byTypeCook[r.type]) byTypeCook[r.type]=[]; byTypeCook[r.type].push(r); });
   var searchHtml='<div class="search"><input id="stockSearch" placeholder="Найти продукт..." oninput="stSearch(this.value)" autocomplete="off"><span class="clr" onclick="stClear()">✕</span></div>';
-  return tabsHtml+searchHtml+'<div class="card stocklist">'+filtered.map(function(r){
-    return '<div class="li stock-item" data-name="'+esc(r.name.toLowerCase())+'"><span class="nm">'+CAT(r.type).icon+' '+esc(r.name)+'</span><span class="vl '+(r.qty<0?'neg':'')+'">'+fmt(r.qty)+' '+r.unit+'</span></div>';
-  }).join('')+'</div>';
+  var bodyCook=CATS.filter(function(cat){ return byTypeCook[cat.id]; }).map(function(cat){
+    return card('stcat'+cat.id,
+      '<span style="flex:1"><b>'+cat.icon+' '+cat.name+'</b> <span class="sub">'+byTypeCook[cat.id].length+' позиций</span></span>',
+      byTypeCook[cat.id].map(function(r){
+        return '<div class="li stock-item" data-name="'+esc(r.name.toLowerCase())+'"><span class="nm">'+esc(r.name)+(r.department?'<div class="sub">'+esc(r.department)+'</div>':'')+'</span><span class="vl '+(r.qty<0?'neg':'')+'">'+fmt(r.qty)+' '+r.unit+'</span></div>';
+      }).join('')
+    );
+  }).join('') || '<p class="sub">Остатков нет.</p>';
+  return searchHtml+bodyCook;
 }
 
 // Цех тут — просто фильтр списка для удобства физического пересчёта (считаешь полку за полкой),
