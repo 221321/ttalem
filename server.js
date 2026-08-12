@@ -854,20 +854,22 @@ function buildReportOutput(from, to) {
     title: 'Выработка' + (from || to ? ' (' + (from || '…') + ' — ' + (to || '…') + ')' : ' (за всё время)'),
     totals: [],
     tables: [
-      { title: 'Обработка (усушка)', headers: ['Сырьё', 'П/ф', 'Ед', 'Операций', 'До', 'После', 'Потеря %'], rows: r.processing.map(x => [x.raw, x.semi, x.unit, x.operations, x.totalBefore, x.totalAfter, x.avgLossPct]) },
+      { title: 'Отходы (списано сверх рецепта из-за %)', headers: ['Сырьё', 'Ед', 'По рецепту', 'Списано сверху', '%'], rows: r.waste.map(x => [x.name, x.unit, x.baseQty, x.wasteQty, x.wastePct]) },
       { title: 'Выпуск готовой продукции', headers: ['Блюдо', 'Ед', 'Кол-во', 'Сумма'], rows: r.production.map(x => [x.name, x.unit, x.count, x.sum != null ? x.sum : '']) }
     ]
   };
 }
 
-function buildReportCosting() {
+function buildReportCosting(role) {
   const r = reportCosting();
+  const showMoney = role === 'admin'; // цена продажи и маржа — коммерческая часть, только директору
+  const headers = showMoney ? ['Блюдо', 'Тип', 'Ед', 'Статус', 'Себестоимость', 'Цена продажи', 'Маржа'] : ['Блюдо', 'Тип', 'Ед', 'Статус', 'Себестоимость'];
   return {
     title: 'Калькуляция себестоимости',
     totals: [{ label: 'Позиций с рецептом', value: r.length }],
     tables: [{
-      title: 'Калькуляция', headers: ['Блюдо', 'Тип', 'Ед', 'Статус', 'Себестоимость', 'Цена продажи', 'Маржа'],
-      rows: r.map(x => [x.name, x.type, x.unit, x.status, x.total, x.salePrice, money2(x.salePrice - x.total)])
+      title: 'Калькуляция', headers: headers,
+      rows: r.map(x => showMoney ? [x.name, x.type, x.unit, x.status, x.total, x.salePrice, money2(x.salePrice - x.total)] : [x.name, x.type, x.unit, x.status, x.total])
     }]
   };
 }
@@ -880,7 +882,7 @@ const REPORT_BUILDERS = {
   stock: (from, to, role) => buildReportStock(role),
   losses: (from, to) => buildReportLosses(from, to),
   output: (from, to) => buildReportOutput(from, to),
-  costing: () => buildReportCosting()
+  costing: (from, to, role) => buildReportCosting(role)
 };
 
 function csvCell(v) {
