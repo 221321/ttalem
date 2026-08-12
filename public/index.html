@@ -120,6 +120,7 @@ var ME = JSON.parse(sessionStorage.getItem('me') || 'null');
 var D = { products: [], stock: {}, sklads: [], alerts: [] };
 var screen = sessionStorage.getItem('screen') || 'prod';
 if (screen === 'work') screen = 'prod'; // раздел "Обработка" убран — у кого-то в сессии могла остаться старая ссылка
+if (screen === 'orders' || screen === 'wo') screen = 'prod'; // разделы "Заказы"/"Специи" убраны из меню
 var pin = '', pickedUser = null;
 var exp = {}, busy = false;
 var wSel = null, wDone = null, wQ = '';
@@ -233,8 +234,8 @@ var NAVS={
   cook_pastry:[['prod','🥪','Выпуск'],['nom','🏷️','Продукты'],['stock','📋 ','Остатки']],
   cook_head: [['prod','🥪','Выпуск'],['nom','🏷️','Продукты'],['stock','📋 ','Остатки']],
   agent:     [['agent','🚚','Продажи']],
-  tech:      [['prod','🥪','Выпуск'],['orders','📝','Заказы'],['nom','🏷️','Продукты'],['wo','🧂','Специи'],['output','📊',  'Выработка'],['stock','📋','Остатки'],['reports','📈','Отчёты']],
-  admin:     [['orders','📝','Заказы'],['sales','💵','Продажи'],['cost','💰','Калькуляция'],['output','📊','Выработка'],['stock','📋','Остатки'],['losses','📉','Потери'],['reports','📈','Отчёты'],['sync','🔄','1С'],['users','🔒','Доступы']]
+  tech:      [['prod','🥪','Выпуск'],['nom','🏷️','Продукты'],['output','📊',  'Выработка'],['stock','📋','Остатки'],['reports','📈','Отчёты']],
+  admin:     [['sales','💵','Продажи'],['cost','💰','Калькуляция'],['output','📊','Выработка'],['stock','📋','Остатки'],['losses','📉','Потери'],['reports','📈','Отчёты'],['sync','🔄','1С'],['users','🔒','Доступы']]
 };
 function shell(inner){
   var navs=NAVS[ME.role]||NAVS.admin;
