@@ -760,12 +760,12 @@ async function scrOutput(){
   var r=await api('/report/output?from='+from+'&to='+to);
   var isAdmin=ME.role==='admin';
   var uStr=function(bu){ return Object.entries(bu).map(function(e){ return esc(e[0])+': '+(typeof e[1]==='object'?fmt(e[1].before)+'→'+fmt(e[1].after):fmt(e[1])); }).join(' · '); };
-  var procHtml=r.processing.length ? r.processing.map(function(m){
-    return card('op'+m.raw+m.semi,
-      '<span style="flex:1"><b>'+esc(m.raw)+' → '+esc(m.semi)+'</b></span><span class="pill '+(m.avgLossPct>35?'bad':m.avgLossPct>20?'warn':'ok')+'">потери '+m.avgLossPct+'%</span>',
-      '<div class="sub">'+fmt(m.totalBefore)+' → '+fmt(m.totalAfter)+' '+m.unit+' · операций: '+m.operations+'</div><div class="sub">'+uStr(m.byUser)+'</div>'
+  var wasteHtml=r.waste.length ? r.waste.map(function(m){
+    return card('ws'+m.name,
+      '<span style="flex:1"><b>'+esc(m.name)+'</b></span><span class="pill '+(m.wastePct>20?'warn':'ok')+'">отход '+m.wastePct+'%</span>',
+      '<div class="sub">по рецепту: '+fmt(m.baseQty)+' '+m.unit+' · списано сверху: '+fmt(m.wasteQty)+' '+m.unit+(isAdmin&&m.wasteSum!==undefined?' · на сумму '+money(m.wasteSum):'')+'</div>'
     );
-  }).join('') : '<p class="sub">Нет данных.</p>';
+  }).join('') : '<p class="sub">За этот период выпуска с % отхода не было.</p>';
   var prodHtml=r.production.length ? r.production.map(function(m){
     return card('pp'+m.name,
       '<span style="flex:1"><b>'+esc(m.name)+'</b></span><b>'+fmt(m.count)+' '+m.unit+'</b>',
@@ -781,8 +781,8 @@ async function scrOutput(){
     +'<button class="btn sec sm" onclick="outSet(7)">Неделя</button>'
     +'<button class="btn sec sm" onclick="outSet(30)">Месяц</button>'
     +'</div></div>'
-    +'<h2>Обработка</h2>'+procHtml
-    +'<h2 style="margin-top:14px">Выпуск</h2>'+prodHtml;
+    +'<h2>Выпуск</h2>'+prodHtml
+    +'<h2 style="margin-top:14px">Отходы (списано сверх рецепта из-за %)</h2>'+wasteHtml;
 }
 window.outSet=function(days){ var d=new Date(); outTo=d.toISOString().slice(0,10); d.setDate(d.getDate()-days); outFrom=d.toISOString().slice(0,10); render(); };
 
