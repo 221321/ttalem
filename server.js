@@ -1741,7 +1741,22 @@ if (p === '/api/ops' && req.method === 'GET') {
         missingInOneC.push({ productId: p.id, name: p.name, code1c: p.code1c });
       }
     });
-    const result = { matched: matched.length, matchedDetails: matched.filter(m => m.nameChanged), newInOneC, missingInOneC };
+    // ---- подозрительная перепривязка по имени ----
+    // Раньше nomenclature-apply тихо переписывал code1c товару, чей текущий код не встретился
+    // в этой выгрузке 1С, если находил точное совпадение по имени с каким-то входящим товаром.
+    // Это может молча привязать код НЕ ТОГО товара (человеческая ошибка/совпадение имён в 1С),
+    // поэтому теперь такие случаи только показываются — применяются исключительно вручную,
+    // через отдельное подтверждение (/api/1c/nomenclature-relink).
+    const incomingByName = {};
+    incoming.forEach(item => { incomingByName[String(item.name || '').trim().toLowerCase()] = item; });
+    const staleCodeSuggestions = [];
+    missingInOneC.forEach(m => {
+      const cand = incomingByName[m.name.trim().toLowerCase()];
+      if (cand) {
+        staleCodeSuggestions.push({ productId: m.productId, ourName: m.name, oldCode: m.code1c, suggestedCode: cand.code, suggestedName: cand.name });
+      }
+    });
+    const result = { matched: matched.length, matchedDetails: matched.filter(m => m.nameChanged), newInOneC, missingInOneC, staleCodeSuggestions };
     db.lastNomenclatureDiff = Object.assign({ ts: new Date().toISOString(), totalIncoming: incoming.length }, result);
     save();
     return json(res, 200, result);
@@ -1938,15 +1953,13 @@ if (p === '/api/ops' && req.method === 'GET') {
     const incoming = data.items || [];
     const byCode = {};
     db.products.forEach(p => { if (p.code1c) byCode[p.code1c] = p; });
-    // фикс v2: сначала было "по имени подхватываем только товары с ПУСТЫМ code1c" —
-    // но при переключении с тестовой базы 1С на боевую у товаров код НЕ пустой, а просто
-    // чужой/старый (от тестовой базы), и он никогда не встретится в incoming с боевой.
-    // Правильное условие — код1с не входит в множество кодов, которые прислала ЭТА
-    // сверка: значит он точно устарел, безопасно подхватывать по имени.
-    const incomingCodes = new Set(incoming.map(item => String(item.code || '')));
-    const byNameNoCode = {};
+    // безопасное автосвязывание по имени — ТОЛЬКО для товаров, у которых кода вообще нет.
+    // Перезаписывать уже существующий (пусть и устаревший) код по совпадению имени больше
+    // не делаем автоматически — это может тихо привязать код НЕ ТОГО товара (см. staleCodeSuggestions
+    // в /api/1c/nomenclature-diff и отдельный /api/1c/nomenclature-relink для ручного подтверждения).
+    const byNameEmptyCode = {};
     db.products.forEach(p => {
-      if (!p.code1c || !incomingCodes.has(p.code1c)) byNameNoCode[p.name.trim().toLowerCase()] = p;
+      if (!p.code1c) byNameEmptyCode[p.name.trim().toLowerCase()] = p;
     });
     let updated = 0, created = 0, linked = 0;
     incoming.forEach(item => {
@@ -1955,7 +1968,7 @@ if (p === '/api/ops' && req.method === 'GET') {
         if (existing.name !== item.name) { existing.name = item.name; updated++; }
         return;
       }
-      const byName = byNameNoCode[String(item.name || '').trim().toLowerCase()];
+      const byName = byNameEmptyCode[String(item.name || '').trim().toLowerCase()];
       if (byName) { byName.code1c = item.code; linked++; return; }
       if (data.createMissing) {
         const nid2 = nid('p');
@@ -1966,6 +1979,25 @@ if (p === '/api/ops' && req.method === 'GET') {
     db.lastNomenclatureDiff = null;
     save();
     return json(res, 200, { updated, created, linked });
+  }
+
+  // ---------- ручное подтверждение перепривязки кода (заменяет старую тихую авто-перепривязку) ----------
+  // Директор явно видел staleCodeSuggestions на экране и подтвердил конкретные пары —
+  // только тогда код меняется. items: [{productId, code}]
+  if (p === '/api/1c/nomenclature-relink' && req.method === 'POST') {
+    if (!isAdmin) return json(res, 403, { error: 'Только директор' });
+    const items = data.items || [];
+    let relinked = 0;
+    const errors = [];
+    items.forEach(it => {
+      const pr = product(it.productId);
+      if (!pr) { errors.push('Товар не найден: ' + it.productId); return; }
+      pr.code1c = String(it.code || '').trim();
+      relinked++;
+    });
+    db.lastNomenclatureDiff = null;
+    save();
+    return json(res, 200, { relinked, errors });
   }
 
   // ---------- клиенты (контрагенты): справочник + сверка с 1С, по тому же принципу что и номенклатура ----------
