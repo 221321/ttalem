@@ -1372,7 +1372,11 @@ function route(req, res, u, data) {
   if (p === '/api/products' && req.method === 'POST') {
     const type = data.type || 'raw';
     if (!VALID_TYPES.includes(type)) return json(res, 400, { error: 'Неверный тип' });
-    // повар может добавлять любые продукты пока идёт наполнение базы
+    // Новую номенклатуру (сырьё) с сайта больше не заводим — только через 1С (сверка номенклатуры).
+    // На сайте можно создавать только рецептуры (готовые блюда) из уже существующего сырья.
+    if (type !== 'dish') {
+      return json(res, 400, { error: 'Новое сырьё заводится только через 1С — сделайте сверку номенклатуры. На сайте можно создавать только рецептуры готовых блюд.' });
+    }
     const np = {
       id: nid('p'), name: (data.name || '').trim(), type, unit: VALID_UNITS.includes(data.unit) ? data.unit : 'кг',
       priceKg: 0, sourceId: data.sourceId || null, code1c: isCook(role) ? '' : (data.code1c || ''),
