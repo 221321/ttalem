@@ -151,7 +151,7 @@ var today = function(){ return new Date().toISOString().slice(0,10); };
 var P = function(id){ return D.products.find(function(p){ return p.id===id; }) || {name:'?',unit:'',recipe:[],type:'raw',department:'Кухня / Заготовки'}; };
 var SK = function(id){ return (D.sklads||[]).find(function(s){ return s.id===id; }) || {name:id||'—'}; };
 var esc = function(s){ return String(s==null?'':s).replace(/[&<>"]/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); };
-var ROLE = {cook:'повар',cook_prep:'повар заготовок',cook_sand:'повар сэндвичей',cook_hot:'повар горячего',cook_baker:'пекарь',cook_pastry:'кондитер',cook_head:'главный повар',tech:'технолог',admin:'директор',agent:'торговый / водитель'};
+var ROLE = {cook:'повар',cook_prep:'повар заготовок',cook_sand:'повар сэндвичей',cook_hot:'повар горячего',cook_baker:'пекарь',cook_pastry:'кондитер',cook_head:'главный повар',tech:'технолог',manager:'менеджер',admin:'директор',agent:'торговый / водитель'};
 var isCook = function(r){ return r==='cook'||r.startsWith('cook_'); };
 var hasRecipe = function(p){ return p&&p.recipe&&p.recipe.length>0; };
 var CATS = [
@@ -200,6 +200,7 @@ async function renderLogin(){
     +'<select id="logincat" style="font-size:17px;padding:14px">'
     +'<option value="cook">Повар</option>'
     +'<option value="tech">Технолог</option>'
+    +'<option value="manager">Менеджер</option>'
     +'<option value="agent">Торговый / водитель</option>'
     +'<option value="admin">Директор</option>'
     +'</select>'
@@ -216,7 +217,7 @@ window.doLogin=async function(){
     var r=await api('/login','POST',{category:cat,pin:pinVal});
     TOKEN=r.token; ME=r.user;
     sessionStorage.setItem('tok',TOKEN); sessionStorage.setItem('me',JSON.stringify(ME));
-    screen=isCook(ME.role)?'prod':ME.role==='agent'?'agent':ME.role==='tech'?'nom':'cost';
+    screen=isCook(ME.role)?'prod':ME.role==='agent'?'agent':ME.role==='tech'?'nom':ME.role==='manager'?'sales':'cost';
     await reload(); render();
   }catch(e){ toast(e.message); $('#loginpin').value=''; }
 };
@@ -232,6 +233,7 @@ var NAVS={
   cook_head: [['prod','🥪','Выпуск'],['nom','🏷️','Продукты'],['stock','📋 ','Остатки']],
   agent:     [['agent','🚚','Продажи']],
   tech:      [['prod','🥪','Выпуск'],['nom','🏷️','Продукты'],['output','📊',  'Выработка'],['stock','📋','Остатки'],['reports','📈','Отчёты']],
+  manager:   [['sales','💵','Продажи'],['stock','📋','Остатки'],['reports','📈','Отчёты']],
   admin:     [['sales','💵','Продажи'],['cost','💰','Калькуляция'],['output','📊','Выработка'],['stock','📋','Остатки'],['losses','📉','Потери'],['reports','📈','Отчёты'],['sync','🔄','1С'],['users','🔒','Доступы']]
 };
 function shell(inner){
@@ -560,9 +562,9 @@ window.stClear=function(){
 // Один физический склад — цех тут только группирует список для удобства просмотра,
 // на сумму/количество товара не влияет (это не разные "корзины" остатка).
 async function scrStock(){
-  var showMoney=ME.role==='admin';
+  var showMoney=ME.role==='admin'||ME.role==='manager';
   var stockData=await api('/report/stock');
-  var isMgrAdmin=ME.role==='admin'||ME.role==='tech';
+  var isMgrAdmin=ME.role==='admin'||ME.role==='tech'||ME.role==='manager';
   if(isMgrAdmin){
     var byType={};
     stockData.forEach(function(r){ if(!byType[r.type]) byType[r.type]=[]; byType[r.type].push(r); });
@@ -1291,7 +1293,7 @@ window.saveSalePrice=async function(id){
 };
 
 // ====== Доступы (PIN-коды) ======
-var ROLE_NAMES={admin:'Директор',tech:'Технолог',agent:'Торговый / водитель',cook:'Повар',cook_prep:'Повар заготовок',cook_sand:'Повар сэндвичей',cook_hot:'Повар горячего',cook_baker:'Пекарь',cook_pastry:'Кондитер',cook_head:'Старший повар'};
+var ROLE_NAMES={admin:'Директор',tech:'Технолог',manager:'Менеджер',agent:'Торговый / водитель',cook:'Повар',cook_prep:'Повар заготовок',cook_sand:'Повар сэндвичей',cook_hot:'Повар горячего',cook_baker:'Пекарь',cook_pastry:'Кондитер',cook_head:'Старший повар'};
 async function scrUsers(){
   var users=await api('/users');
   var roleOpts=Object.keys(ROLE_NAMES).map(function(r){ return '<option value="'+r+'"'+(r===newUserRole?' selected':'')+'>'+ROLE_NAMES[r]+'</option>'; }).join('');
