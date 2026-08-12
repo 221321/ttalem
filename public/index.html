@@ -151,7 +151,7 @@ var today = function(){ return new Date().toISOString().slice(0,10); };
 var P = function(id){ return D.products.find(function(p){ return p.id===id; }) || {name:'?',unit:'',recipe:[],type:'raw',department:'Кухня / Заготовки'}; };
 var SK = function(id){ return (D.sklads||[]).find(function(s){ return s.id===id; }) || {name:id||'—'}; };
 var esc = function(s){ return String(s==null?'':s).replace(/[&<>"]/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); };
-var ROLE = {cook:'повар',cook_prep:'повар заготовок',cook_sand:'повар сэндвичей',cook_hot:'повар горячего',cook_baker:'пекарь',cook_pastry:'кондитер',cook_head:'главный повар',tech:'менеджер',admin:'директор',agent:'торговый / водитель'};
+var ROLE = {cook:'повар',cook_prep:'повар заготовок',cook_sand:'повар сэндвичей',cook_hot:'повар горячего',cook_baker:'пекарь',cook_pastry:'кондитер',cook_head:'главный повар',tech:'технолог',admin:'директор',agent:'торговый / водитель'};
 var isCook = function(r){ return r==='cook'||r.startsWith('cook_'); };
 var hasRecipe = function(p){ return p&&p.recipe&&p.recipe.length>0; };
 var CATS = [
@@ -164,7 +164,7 @@ var DEPARTMENTS = ['Кухня / Заготовки','Сэндвичи','Гор�
 var UNITS = ['кг','г','шт','л','мл'];
 var ST = {
   draft:'<span class="pill warn">✏️ черновик</span>',
-  submitted:'<span class="pill info">📨 у менеджера</span>',
+  submitted:'<span class="pill info">📨 у технолога</span>',
   approved:'<span class="pill ok">✅ утверждена</span>'
 };
 
@@ -199,7 +199,7 @@ async function renderLogin(){
     +'<label style="font-size:14px">Роль</label>'
     +'<select id="logincat" style="font-size:17px;padding:14px">'
     +'<option value="cook">Повар</option>'
-    +'<option value="tech">Менеджер</option>'
+    +'<option value="tech">Технолог</option>'
     +'<option value="agent">Торговый / водитель</option>'
     +'<option value="admin">Директор</option>'
     +'</select>'
@@ -451,7 +451,7 @@ function scrNom(){
     var recHtml=hasRecipe(p)?'<div style="background:var(--bg);border-radius:8px;padding:8px 10px">'+recRows(p)+'</div>':'<p class="sub">Состав не заполнен — нажмите ✎ чтобы добавить</p>';
     var actBtn='';
     if(hasRecipe(p)){
-      if(st==='draft'&&isCook(ME.role)) actBtn='<button class="btn grn" style="margin-top:8px" onclick="event.stopPropagation();recStatus(\''+p.id+'\',\'submit\',\'Передать менеджеру?\')">Передать менеджеру →</button>';
+      if(st==='draft'&&isCook(ME.role)) actBtn='<button class="btn grn" style="margin-top:8px" onclick="event.stopPropagation();recStatus(\''+p.id+'\',\'submit\',\'Передать технологу?\')">Передать технологу →</button>';
       if(st!=='approved'&&ME.role==='tech') actBtn='<button class="btn grn" style="margin-top:8px" onclick="event.stopPropagation();recStatus(\''+p.id+'\',\'approve\',\'Утвердить?\')">✅ Утвердить</button>';
     }
     var info='';
@@ -490,7 +490,7 @@ function drawNomEdit(id,p){
     +'<div class="row">'+(id?'<div><label>Категория</label><select id="gt">'+catOpts+'</select></div>':'<div><label>Категория</label><div class="pill ok" style="margin-top:6px">🥪 Готовое блюдо</div></div>')
     +'<div><label>Единица</label><select id="gu">'+unitOpts+'</select></div></div>'
 +'<label>Цех</label><select id="gdept">'+deptOpts+'</select>'
-    +(isCook(ME.role)?'':'<label>Код в 1С (заполняет менеджер)</label><input id="gc" value="'+esc(p.code1c||'')+'">')
+    +(isCook(ME.role)?'':'<label>Код в 1С (заполняет технолог)</label><input id="gc" value="'+esc(p.code1c||'')+'">')
     +(!isCook(ME.role)&&p.type==='raw'?'<label>% отхода при чистке/нарезке (0 — если товар используется как есть)</label><input id="gwaste" type="number" min="0" max="99" step="1" inputmode="numeric" value="'+(p.wastePct||0)+'"><p class="sub" style="margin-top:2px">Например, помидор 10% — при списании по рецепту система спишет со склада на 10% больше сырого веса, чем указано в составе блюда.</p>':'')
     +'</div>'
 +(p.type==='process'
@@ -1291,7 +1291,7 @@ window.saveSalePrice=async function(id){
 };
 
 // ====== Доступы (PIN-коды) ======
-var ROLE_NAMES={admin:'Директор',tech:'Менеджер',agent:'Торговый / водитель',cook:'Повар',cook_prep:'Повар заготовок',cook_sand:'Повар сэндвичей',cook_hot:'Повар горячего',cook_baker:'Пекарь',cook_pastry:'Кондитер',cook_head:'Старший повар'};
+var ROLE_NAMES={admin:'Директор',tech:'Технолог',agent:'Торговый / водитель',cook:'Повар',cook_prep:'Повар заготовок',cook_sand:'Повар сэндвичей',cook_hot:'Повар горячего',cook_baker:'Пекарь',cook_pastry:'Кондитер',cook_head:'Старший повар'};
 async function scrUsers(){
   var users=await api('/users');
   var roleOpts=Object.keys(ROLE_NAMES).map(function(r){ return '<option value="'+r+'"'+(r===newUserRole?' selected':'')+'>'+ROLE_NAMES[r]+'</option>'; }).join('');
