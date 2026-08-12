@@ -1524,9 +1524,16 @@ if (p === '/api/ops' && req.method === 'GET') {
     ops = ops.slice(-500);
     // подмешиваем статус документа в 1С (если продажа/накладная уже была отправлена и 1С отчиталась)
     ops = ops.map(o => {
-      if (o.type !== 'sale' && o.type !== 'waybill') return o;
-      const ds = db.docStatus[o.type + '|' + o.id];
-      return ds ? Object.assign({}, o, { docStatus: ds }) : o;
+      if (o.type === 'sale' || o.type === 'waybill') {
+        const ds = db.docStatus[o.type + '|' + o.id];
+        return ds ? Object.assign({}, o, { docStatus: ds }) : o;
+      }
+      if (o.type === 'production') {
+        const ref = 'prod|' + o.ts.slice(0, 10) + '|' + o.productId;
+        const ds = db.docStatus[ref];
+        return ds ? Object.assign({}, o, { docStatus: ds }) : o;
+      }
+      return o;
     });
     if (!isAdmin) ops = ops.map(o => {
       const c = Object.assign({}, o);
