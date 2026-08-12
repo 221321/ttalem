@@ -156,9 +156,6 @@ var isCook = function(r){ return r==='cook'||r.startsWith('cook_'); };
 var hasRecipe = function(p){ return p&&p.recipe&&p.recipe.length>0; };
 var CATS = [
   {id:'raw',icon:'🛒',name:'Продукты'},
-  {id:'process',icon:'⚖️',name:'Выработка'},
-  {id:'semi',icon:'🧊',name:'Полуфабрикаты'},
-  {id:'bread',icon:'🍞',name:'Хлеб и тесто'},
   {id:'dish',icon:'🥪',name:'Готовые блюда'}
 ];
 var CAT = function(id){ return CATS.find(function(c){ return c.id===id; }) || {icon:'📦',name:id||''}; };
@@ -469,7 +466,7 @@ function scrNom(){
   return tabsHtml+searchHtml+'<div class="nomlist">'+items+'</div>'+'<button class="btn" onclick="nomEdit(null)">+ Добавить позицию</button>';
 }
 window.nomEdit=function(id){
-  var p=id?P(id):{name:'',type:nomTab,unit:nomTab==='dish'?'шт':'кг',sourceId:'',code1c:'',department:nomTab==='dish'?'Готовая продукция':(nomTab==='bread'?'Хлеб и тесто':'Кухня / Заготовки'),recipe:[]};
+  var p=id?P(id):{name:'',type:nomTab,unit:nomTab==='dish'?'шт':'кг',sourceId:'',code1c:'',department:nomTab==='dish'?'Готовая продукция':'Кухня / Заготовки',recipe:[]};
   editRecipe=JSON.parse(JSON.stringify(p.recipe||[]));
   drawNomEdit(id,p);
 };
