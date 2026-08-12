@@ -362,11 +362,11 @@ function opProduction(o) {
   const planned = p.recipe.map(it => {
     const c = product(it.productId);
     const uc = unitCost(it.productId);
-    let factor = (c && (c.unit === 'кг' || c.unit === 'л')) ? it.qty * o.count / 1000 : it.qty * o.count;
-    factor *= wasteMultiplier(c); // спишем больше сырья, чем указано в рецепте, с поправкой на % отхода
+    const baseFactor = (c && (c.unit === 'кг' || c.unit === 'л')) ? it.qty * o.count / 1000 : it.qty * o.count;
+    const factor = baseFactor * wasteMultiplier(c); // спишем больше сырья, чем указано в рецепте, с поправкой на % отхода
     const skId = MAIN_SK;
     const s = stockOf(it.productId, skId);
-    return { it, c, uc, factor, skId, s };
+    return { it, c, uc, baseFactor, factor, skId, s };
   });
   const insuff = planned.find(x => x.s.qty + 0.001 < x.factor);
   if (insuff) {
@@ -378,7 +378,8 @@ function opProduction(o) {
     x.s.qty = r2(x.s.qty - x.factor);
     x.s.value = r2(Math.max(0, x.s.value - val));
     total += val;
-    return { productId: x.it.productId, skladId: x.skId, qty: r2(x.factor), sum: val };
+    const wasteQty = r2(x.factor - x.baseFactor);
+    return { productId: x.it.productId, skladId: x.skId, qty: r2(x.factor), sum: val, baseQty: r2(x.baseFactor), wasteQty: wasteQty };
   });
   const outSkId = MAIN_SK;
   const sd = stockOf(o.productId, outSkId);
@@ -617,17 +618,17 @@ function reportCosting() {
 }
 function reportOutput(from, to, hideMoney) {
   const inRange = o => (!from || o.ts.slice(0, 10) >= from) && (!to || o.ts.slice(0, 10) <= to);
-  const proc = {};
-  db.operations.filter(o => o.type === 'processing' && inRange(o)).forEach(o => {
-    const k = o.semiId;
-    if (!proc[k]) proc[k] = { semiId: o.semiId, rawId: o.rawId, n: 0, before: 0, after: 0, byUser: {} };
-    proc[k].n++; proc[k].before = r2(proc[k].before + o.qtyBefore); proc[k].after = r2(proc[k].after + o.qtyAfter);
-    const u = db.users.find(u => u.id === o.userId);
-    const un = u ? u.name : '?';
-    if (!proc[k].byUser[un]) proc[k].byUser[un] = { before: 0, after: 0, n: 0 };
-    proc[k].byUser[un].before = r2(proc[k].byUser[un].before + o.qtyBefore);
-    proc[k].byUser[un].after = r2(proc[k].byUser[un].after + o.qtyAfter);
-    proc[k].byUser[un].n++;
+  const waste = {};
+  db.operations.filter(o => o.type === 'production' && inRange(o)).forEach(o => {
+    (o.writeoffs || []).forEach(w => {
+      if (!(w.wasteQty > 0.0001)) return; // ингредиент без % отхода — не показываем
+      const k = w.productId;
+      if (!waste[k]) waste[k] = { productId: k, baseQty: 0, wasteQty: 0, wasteSum: 0, n: 0 };
+      waste[k].baseQty = r2(waste[k].baseQty + w.baseQty);
+      waste[k].wasteQty = r2(waste[k].wasteQty + w.wasteQty);
+      waste[k].wasteSum = r2(waste[k].wasteSum + r2((w.sum / w.qty) * w.wasteQty || 0));
+      waste[k].n++;
+    });
   });
   const prod = {};
   db.operations.filter(o => o.type === 'production' && inRange(o)).forEach(o => {
@@ -639,11 +640,13 @@ function reportOutput(from, to, hideMoney) {
     prod[k].byUser[un] = r2((prod[k].byUser[un] || 0) + o.count);
   });
   return {
-    processing: Object.values(proc).map(m => ({
-      raw: product(m.rawId) ? product(m.rawId).name : '?', semi: product(m.semiId) ? product(m.semiId).name : '?',
-      unit: product(m.rawId) ? product(m.rawId).unit : '', operations: m.n, totalBefore: m.before, totalAfter: m.after,
-      avgLossPct: m.before > 0 ? r2((1 - m.after / m.before) * 100) : 0, byUser: m.byUser
-    })),
+    waste: Object.values(waste).map(m => {
+      const c = product(m.productId);
+      const row = { name: c ? c.name : '?', unit: c ? c.unit : '', baseQty: m.baseQty, wasteQty: m.wasteQty,
+        wastePct: c && c.wastePct ? c.wastePct : (m.baseQty > 0 ? r2(m.wasteQty / m.baseQty * 100) : 0) };
+      if (!hideMoney) row.wasteSum = m.wasteSum;
+      return row;
+    }),
     production: Object.values(prod).map(m => {
       const row = { name: product(m.productId) ? product(m.productId).name : '?', unit: product(m.productId) ? product(m.productId).unit : '', count: m.count, byUser: m.byUser };
       if (!hideMoney) row.sum = m.sum;
