@@ -463,7 +463,7 @@ function scrNom(){
       recHtml+actBtn
     )+'</div>';
   }).join('') || '<p class="sub">В этой категории пусто.</p>';
-  return tabsHtml+searchHtml+'<div class="nomlist">'+items+'</div>'+'<button class="btn" onclick="nomEdit(null)">+ Добавить позицию</button>';
+  return tabsHtml+searchHtml+'<div class="nomlist">'+items+'</div>'+(nomTab==='dish'?'<button class="btn" onclick="nomEdit(null)">+ Добавить блюдо</button>':'<p class="sub" style="text-align:center;margin-top:10px">Новое сырьё заводится только через 1С — раздел «1С» → сверка номенклатуры.</p>');
 }
 window.nomEdit=function(id){
   var p=id?P(id):{name:'',type:nomTab,unit:nomTab==='dish'?'шт':'кг',sourceId:'',code1c:'',department:nomTab==='dish'?'Готовая продукция':'Кухня / Заготовки',recipe:[]};
@@ -487,10 +487,9 @@ function drawNomEdit(id,p){
     +'<div class="card" style="margin-top:10px">'
     +(locked?'<p class="pill ok" style="margin-bottom:8px">✅ Рецептура утверждена — изменения через директора</p>':'')
     +'<label>Наименование</label><input id="gn" value="'+esc(p.name)+'" '+(locked?'disabled':'')+' >'
-    +'<div class="row"><div><label>Категория</label><select id="gt">'+catOpts+'</select></div>'
+    +'<div class="row">'+(id?'<div><label>Категория</label><select id="gt">'+catOpts+'</select></div>':'<div><label>Категория</label><div class="pill ok" style="margin-top:6px">🥪 Готовое блюдо</div></div>')
     +'<div><label>Единица</label><select id="gu">'+unitOpts+'</select></div></div>'
 +'<label>Цех</label><select id="gdept">'+deptOpts+'</select>'
-    +(isCook(ME.role)?'':'<label>Исходный продукт (только для Выработки ⚖️ — пары «сырьё → обработанное»)</label><select id="gs">'+srcOpts+'</select>')
     +(isCook(ME.role)?'':'<label>Код в 1С (заполняет менеджер)</label><input id="gc" value="'+esc(p.code1c||'')+'">')
     +(!isCook(ME.role)&&p.type==='raw'?'<label>% отхода при чистке/нарезке (0 — если товар используется как есть)</label><input id="gwaste" type="number" min="0" max="99" step="1" inputmode="numeric" value="'+(p.wastePct||0)+'"><p class="sub" style="margin-top:2px">Например, помидор 10% — при списании по рецепту система спишет со склада на 10% больше сырого веса, чем указано в составе блюда.</p>':'')
     +'</div>'
@@ -546,8 +545,7 @@ window.stClear=function(){
 };
   window.nomSave=async function(id){
   collectNomRec();
-  var body={type:$('#gt').value,unit:$('#gu').value,department:$('#gdept')?$('#gdept').value:'Кухня / Заготовки',recipe:editRecipe.filter(function(it){ return it.qty>0; })};
-  if($('#gs')) body.sourceId=$('#gs').value||null;
+  var body={type:$('#gt')?$('#gt').value:'dish',unit:$('#gu').value,department:$('#gdept')?$('#gdept').value:'Кухня / Заготовки',recipe:editRecipe.filter(function(it){ return it.qty>0; })};
   if($('#gc')) body.code1c=$('#gc').value.trim();
   if($('#gwaste')) body.wastePct=+$('#gwaste').value||0;
   if(!$('#gn').disabled) body.name=$('#gn').value.trim();
