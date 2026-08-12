@@ -48,7 +48,7 @@ const ROLE_DEPARTMENTS = {
   cook_pastry: ['Кондитерка'],
 };
 function canSeeDepartment(role, dept) {
-  if (role === 'admin' || role === 'tech' || role === 'cook' || role === 'cook_head') return true;
+  if (role === 'admin' || role === 'tech' || role === 'manager' || role === 'cook' || role === 'cook_head') return true;
   const allowed = ROLE_DEPARTMENTS[role];
   return !allowed || allowed.includes(dept);
 }
@@ -656,7 +656,7 @@ function reportOutput(from, to, hideMoney) {
 }
 // остатки по товару (один физический склад — MAIN_SK)
 function reportStock(role) {
-  const showMoney = role === 'admin' || role === 'tech';
+  const showMoney = role === 'admin' || role === 'tech' || role === 'manager';
   const rows = [];
   db.products.forEach(p => {
     if (!canSeeDepartment(role, p.department)) return;
@@ -1301,13 +1301,14 @@ function route(req, res, u, data) {
   const role = user.role;
   const isAdmin = role === 'admin';
   const isTech = role === 'tech';
+  const isManager = role === 'manager';
 
   if (p === '/api/bootstrap' && req.method === 'GET') {
     const myProds = (isCook(role) && role !== 'cook_head') ? cookProducts(role) : db.products;
     const stock = {};
     myProds.forEach(prod => {
       const ts = totalStock(prod.id);
-      stock[prod.id] = isAdmin || isTech
+      stock[prod.id] = isAdmin || isTech || isManager
         ? { total: ts, bySklad: db.stock[prod.id] || {}, avg: ts.qty > 0.0001 ? r2(ts.value / ts.qty) : 0 }
         : { total: ts };
     });
@@ -1474,7 +1475,7 @@ function route(req, res, u, data) {
   // Не удаляет запись — помечает cancelled, чтобы осталась в истории и не потерялся id для дедупа. ----------
   const mSaleCancel = p.match(/^\/api\/sales\/([^/]+)\/cancel$/);
   if (mSaleCancel && req.method === 'POST') {
-    if (!isAdmin && role !== 'tech') return json(res, 403, { error: 'Отменить продажу может только директор/менеджер' });
+    if (!isAdmin && role !== 'manager') return json(res, 403, { error: 'Отменить продажу может только директор/менеджер' });
     const rec = db.operations.find(o => o.id === mSaleCancel[1] && (o.type === 'sale' || o.type === 'waybill'));
     if (!rec) return json(res, 404, { error: 'Продажа не найдена' });
     if (rec.cancelled) return json(res, 400, { error: 'Уже отменена' });
@@ -1584,17 +1585,20 @@ if (p === '/api/ops' && req.method === 'GET') {
 
   // ---------- отчёты директору: единый экран выбора отчёта ----------
   if (p === '/api/reports/list' && req.method === 'GET') {
-    if (!isAdmin && role !== 'tech') return json(res, 403, { error: 'Отчёты доступны директору' });
-    // технологу — только производственная зона (остатки/потери/выработка/себестоимость),
-    // продажи/долги/касса/по агентам — зона директора и агентов, технологу не нужна
+    if (!isAdmin && role !== 'tech' && role !== 'manager') return json(res, 403, { error: 'Отчёты доступны директору' });
+    // технологу — производственная зона, менеджеру — зона продаж/касса, остальное только директору
     const TECH_REPORTS = ['stock', 'losses', 'output', 'costing'];
-    const ids = isAdmin ? Object.keys(REPORTS) : TECH_REPORTS;
+    const MANAGER_REPORTS = ['sales', 'debts', 'byagent', 'cash'];
+    const ids = isAdmin ? Object.keys(REPORTS) : (role === 'tech' ? TECH_REPORTS : MANAGER_REPORTS);
     return json(res, 200, ids.map(id => Object.assign({ id }, REPORTS[id])));
   }
   if (p === '/api/reports/run' && req.method === 'GET') {
-    if (!isAdmin && role !== 'tech') return json(res, 403, { error: 'Отчёты доступны директору' });
+    if (!isAdmin && role !== 'tech' && role !== 'manager') return json(res, 403, { error: 'Отчёты доступны директору' });
     const type = u.searchParams.get('type');
-    if (!isAdmin && !['stock', 'losses', 'output', 'costing'].includes(type)) {
+    const TECH_TYPES = ['stock', 'losses', 'output', 'costing'];
+    const MANAGER_TYPES = ['sales', 'debts', 'byagent', 'cash'];
+    const allowedTypes = role === 'tech' ? TECH_TYPES : MANAGER_TYPES;
+    if (!isAdmin && !allowedTypes.includes(type)) {
       return json(res, 403, { error: 'Этот отчёт доступен только директору' });
     }
     const builder = REPORT_BUILDERS[type];
@@ -1660,7 +1664,7 @@ if (p === '/api/ops' && req.method === 'GET') {
       return json(res, 200, { onHand: cashOnHand(user.id), history: db.cashHandovers.filter(h => h.userId === user.id).slice(-20).reverse() });
     }
     // директор/менеджер — сводка по всем, у кого есть продажи с наличными
-    if (!isAdmin && role !== 'tech') return json(res, 403, { error: 'Нет прав' });
+    if (!isAdmin && role !== 'manager') return json(res, 403, { error: 'Нет прав' });
     const sellerIds = new Set(db.operations.filter(o => o.type === 'sale' && !o.cancelled && (o.paymentCash || 0) > 0).map(o => o.userId));
     const rows = Array.from(sellerIds).map(uid => {
       const u2 = db.users.find(x => x.id === uid);
@@ -1671,7 +1675,7 @@ if (p === '/api/ops' && req.method === 'GET') {
   if (p === '/api/cash/handover' && req.method === 'POST') {
     if (isCook(role)) return json(res, 403, { error: 'Нет прав' });
     // агент сдаёт свою наличность; директор/менеджер может зафиксировать сдачу от чужого имени (userId в теле)
-    const targetUserId = (isAdmin || role === 'tech') && data.userId ? data.userId : user.id;
+    const targetUserId = (isAdmin || role === 'manager') && data.userId ? data.userId : user.id;
     if (isAgent(role) && targetUserId !== user.id) return json(res, 403, { error: 'Можно сдавать только свою наличность' });
     const amount = r2(+data.amount || 0);
     if (!(amount > 0)) return json(res, 400, { error: 'Сумма должна быть больше нуля' });
