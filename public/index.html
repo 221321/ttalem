@@ -790,6 +790,7 @@ window.outSet=function(days){ var d=new Date(); outTo=d.toISOString().slice(0,10
 
 // ====== Продажи (реализация) ======
 var saleFrom = null, saleTo = null, saleQty = '', salePriceInput = '', salePeriod = 0;
+var saleStatusFilter = 'all', saleSearchQ = '';
 async function scrSales(){
   var from=saleFrom||today(), to=saleTo||today();
   var dishes=D.products.filter(function(p){ return p.type==='dish'; });
@@ -840,30 +841,59 @@ async function scrSales(){
     +'<div style="height:4px"></div><label style="display:flex;align-items:center;gap:6px;margin:10px 0 0"><input type="checkbox" id="saPaid" checked style="width:auto"> Оплачено</label>'
     +'<div style="height:10px"></div><button class="btn" onclick="saleSave()">Продать</button></div>';
 
-  // --- список продаж, сгруппированный по датам при периоде >1 дня ---
+  // --- список продаж: таблица с фильтром по статусу и поиском (как в Жайыке) ---
+  var filteredRows = r.rows.filter(function(s){
+    if(saleStatusFilter==='paid') return s.paid;
+    if(saleStatusFilter==='debt') return !s.paid;
+    return true;
+  }).filter(function(s){
+    if(!saleSearchQ) return true;
+    var q=saleSearchQ.toLowerCase();
+    return s.name.toLowerCase().includes(q) || (s.client||'').toLowerCase().includes(q) || (s.sellerName||'').toLowerCase().includes(q);
+  });
+  var statusTabsHtml='<div class="tabbar">'
+    +'<button class="'+(saleStatusFilter==='all'?'on':'')+'" onclick="saleStatusFilter=\'all\';renderInPlace()">Все ('+r.rows.length+')</button>'
+    +'<button class="'+(saleStatusFilter==='paid'?'on':'')+'" onclick="saleStatusFilter=\'paid\';renderInPlace()">Оплачено ('+r.rows.filter(function(s){return s.paid;}).length+')</button>'
+    +'<button class="'+(saleStatusFilter==='debt'?'on':'')+'" onclick="saleStatusFilter=\'debt\';renderInPlace()">Долг ('+r.rows.filter(function(s){return !s.paid;}).length+')</button>'
+    +'</div>';
+  var searchHtmlSales='<div class="search"><input id="saleSearchInput" placeholder="Поиск по клиенту, блюду, продавцу..." value="'+esc(saleSearchQ)+'" oninput="saleSearchQ=this.value;renderInPlace()" autocomplete="off"></div>';
   var rowsHtml='';
-  if(!r.rows.length){
-    rowsHtml='<p class="sub">Продаж за период нет.</p>';
+  if(!filteredRows.length){
+    rowsHtml='<p class="sub">Ничего не найдено за этот период.</p>';
   } else {
-    var lastDate=null;
-    r.rows.forEach(function(s){
-      var d=new Date(s.ts);
-      var dkey=d.toLocaleDateString('ru-RU',{day:'2-digit',month:'2-digit'});
-      if(multiDay && dkey!==lastDate){ rowsHtml+='<div class="datehead">'+dkey+'</div>'; lastDate=dkey; }
-      rowsHtml+=card('sl'+s.id,
-        '<span style="flex:1"><b>'+esc(s.name)+'</b> × '+fmt(s.qty)+'</span><b>'+money(s.sum)+'</b>',
-        '<div class="sub">'+d.toLocaleString('ru-RU',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})+(s.client?' · '+esc(s.client):'')+'</div>'
-          +'<div class="sub">Себестоимость: '+money(s.costSum)+' · Прибыль: '+money(s.profit)+'</div>'
-          +(s.paid?'<span class="pill ok">оплачено</span>':'<span class="pill bad">долг '+money(s.debt)+'</span>'
-            +'<div style="height:6px"></div><input class="big" id="pay'+s.id+'" type="number" step="1" placeholder="Сумма оплаты" style="margin-bottom:6px">'
-            +'<button class="btn sec sm" onclick="event.stopPropagation();salePay(\''+s.id+'\')">Погасить</button>')
-          +'<div style="height:8px"></div><button class="btn sec sm" style="color:var(--red);border-color:var(--red)" onclick="event.stopPropagation();saleCancel(\''+s.id+'\')">Отменить продажу</button>'
-      );
-    });
+    rowsHtml='<div style="overflow-x:auto"><table class="rtable"><thead><tr>'
+      +'<th>Время</th><th>Блюдо</th><th>Продавец</th><th>Клиент</th><th style="text-align:right">Сумма</th><th>Оплата</th><th>Статус</th><th></th>'
+      +'</tr></thead><tbody>'
+      +filteredRows.map(function(s){
+        var d=new Date(s.ts);
+        var timeStr=d.toLocaleString('ru-RU',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
+        var payStr=(s.paymentCash?'нал '+fmt(s.paymentCash):'')+(s.paymentCash&&s.paymentQr?' · ':'')+(s.paymentQr?'QR '+fmt(s.paymentQr):'')||'—';
+        var statusPill=s.paid?'<span class="pill ok">оплачено</span>':'<span class="pill bad">долг '+money(s.debt)+'</span>';
+        return '<tr>'
+          +'<td class="sub">'+timeStr+'</td>'
+          +'<td>'+esc(s.name)+' ×'+fmt(s.qty)+'</td>'
+          +'<td>'+esc(s.sellerName||'—')+'</td>'
+          +'<td>'+esc(s.client||'—')+'</td>'
+          +'<td style="text-align:right">'+money(s.sum)+'</td>'
+          +'<td class="sub">'+payStr+'</td>'
+          +'<td>'+statusPill+'</td>'
+          +'<td>'+(s.paid?'':'<button class="btn sec sm" onclick="salePayPrompt(\''+s.id+'\')">Погасить</button>')
+            +' <button class="btn sec sm" style="color:var(--red);border-color:var(--red)" onclick="saleCancel(\''+s.id+'\')">✕</button></td>'
+          +'</tr>';
+      }).join('')
+      +'</tbody></table></div>';
   }
-  return '<h2>💵 Продажи</h2>'+periodHtml+cashHtml+formHtml+'<div class="hl">Продажи за период</div>'+rowsHtml;
+  return '<h2>💵 Продажи</h2>'+periodHtml+cashHtml+formHtml+'<div class="hl">Продажи за период</div>'+statusTabsHtml+searchHtmlSales+rowsHtml;
 }
 window.saleSet=function(days){ salePeriod=days; var d=new Date(); saleTo=d.toISOString().slice(0,10); d.setDate(d.getDate()-days); saleFrom=d.toISOString().slice(0,10); render(); };
+window.salePayPrompt=async function(id){
+  var v=prompt('Сумма оплаты, ₸:');
+  if(v==null) return;
+  var amount=+v;
+  if(!(amount>0)) return toast('Введите сумму больше нуля');
+  try{ await api('/sales/'+id+'/pay','POST',{amount:amount}); toast('✅ Оплата зачтена'); render(); }
+  catch(e){ toast(e.message); }
+};
 
 // ====== Отчёты директору ======
 var reportsType='sales', reportsFrom=null, reportsTo=null, reportsPeriod=0, reportsListCache=null;
