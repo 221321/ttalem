@@ -246,6 +246,14 @@ function totalStock(pid) {
   return { qty, value };
 }
 function product(pid) { return db.products.find(p => p.id === pid); }
+// множитель на списание сырья с поправкой на % отхода при чистке/нарезке
+// (например помидор с wastePct=10 — на каждые 100г "в блюде" спишется 111г сырого со склада)
+function wasteMultiplier(c) {
+  if (c && c.type === 'raw' && c.wastePct > 0 && c.wastePct < 100) {
+    return 1 / (1 - c.wastePct / 100);
+  }
+  return 1;
+}
 function unitCost(pid, seen) {
   seen = seen || {};
   if (seen[pid]) return 0;
@@ -266,10 +274,11 @@ function recipeCost(p, seen) {
     const c = product(it.productId);
     const uc = unitCost(it.productId, Object.assign({}, seen));
     // г→кг, мл→л, остальное (в т.ч. 'г' и 'мл' единицы хранения) как есть
-    const factor = (c && (c.unit === 'кг' || c.unit === 'л')) ? it.qty / 1000 : it.qty;
+    let factor = (c && (c.unit === 'кг' || c.unit === 'л')) ? it.qty / 1000 : it.qty;
+    factor *= wasteMultiplier(c); // поправка на % отхода — считаем от сырого, а не от чистого веса
     const cost = r2(uc * factor);
     total += cost;
-    return { productId: it.productId, name: c ? c.name : '?', qty: it.qty, unit: c ? c.unit : '', unitCost: r2(uc), cost, hasRecipe: !!(c && c.recipe && c.recipe.length) };
+    return { productId: it.productId, name: c ? c.name : '?', qty: it.qty, unit: c ? c.unit : '', unitCost: r2(uc), cost, hasRecipe: !!(c && c.recipe && c.recipe.length), wastePct: (c && c.wastePct > 0) ? c.wastePct : 0 };
   });
   return { total: r2(total), items };
 }
@@ -353,7 +362,8 @@ function opProduction(o) {
   const planned = p.recipe.map(it => {
     const c = product(it.productId);
     const uc = unitCost(it.productId);
-    const factor = (c && (c.unit === 'кг' || c.unit === 'л')) ? it.qty * o.count / 1000 : it.qty * o.count;
+    let factor = (c && (c.unit === 'кг' || c.unit === 'л')) ? it.qty * o.count / 1000 : it.qty * o.count;
+    factor *= wasteMultiplier(c); // спишем больше сырья, чем указано в рецепте, с поправкой на % отхода
     const skId = MAIN_SK;
     const s = stockOf(it.productId, skId);
     return { it, c, uc, factor, skId, s };
@@ -1367,7 +1377,8 @@ function route(req, res, u, data) {
       id: nid('p'), name: (data.name || '').trim(), type, unit: VALID_UNITS.includes(data.unit) ? data.unit : 'кг',
       priceKg: 0, sourceId: data.sourceId || null, code1c: isCook(role) ? '' : (data.code1c || ''),
       skladId: MAIN_SK, department: DEPARTMENTS.includes(data.department) ? data.department : departmentForType(type), salePrice: 0,
-      recipe: (data.recipe || []).filter(it => it.qty > 0), recipeLog: [], lastCost: 0
+      recipe: (data.recipe || []).filter(it => it.qty > 0), recipeLog: [], lastCost: 0,
+      wastePct: (type === 'raw' && +data.wastePct > 0 && +data.wastePct < 100) ? +data.wastePct : 0
     };
     if (!np.name) return json(res, 400, { error: 'Введите наименование' });
     if (np.recipe.length) { np.recipeStatus = 'draft'; logRecipe(np, user, 'создал рецептуру'); }
@@ -1393,6 +1404,7 @@ function route(req, res, u, data) {
     if (data.code1c !== undefined) pr.code1c = data.code1c;
     if (data.salePrice !== undefined && !isCook(role)) pr.salePrice = +data.salePrice || 0;
     if (data.department !== undefined && DEPARTMENTS.includes(data.department)) pr.department = data.department;
+    if (data.wastePct !== undefined) pr.wastePct = (pr.type === 'raw' && +data.wastePct > 0 && +data.wastePct < 100) ? +data.wastePct : 0;
     if (cleanRecipe !== undefined) pr.recipe = cleanRecipe;
     if (pr.recipe.length && !pr.recipeStatus) pr.recipeStatus = 'draft';
     save();
