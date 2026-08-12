@@ -1344,7 +1344,7 @@ function route(req, res, u, data) {
   }
 
   // ---------- пользователи (PIN-коды) ----------
-  const VALID_USER_ROLES = ['admin', 'tech', 'agent', 'cook', 'cook_prep', 'cook_sand', 'cook_hot', 'cook_baker', 'cook_pastry', 'cook_head'];
+  const VALID_USER_ROLES = ['admin', 'tech', 'manager', 'agent', 'cook', 'cook_prep', 'cook_sand', 'cook_hot', 'cook_baker', 'cook_pastry', 'cook_head'];
   if (p === '/api/users' && req.method === 'GET') {
     if (!isAdmin) return json(res, 403, { error: 'Только директор' });
     return json(res, 200, db.users.map(x => ({ id: x.id, name: x.name, role: x.role })));
