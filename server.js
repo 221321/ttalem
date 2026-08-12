@@ -1583,11 +1583,18 @@ if (p === '/api/ops' && req.method === 'GET') {
   // ---------- отчёты директору: единый экран выбора отчёта ----------
   if (p === '/api/reports/list' && req.method === 'GET') {
     if (!isAdmin && role !== 'tech') return json(res, 403, { error: 'Отчёты доступны директору' });
-    return json(res, 200, Object.keys(REPORTS).map(id => Object.assign({ id }, REPORTS[id])));
+    // технологу — только производственная зона (остатки/потери/выработка/себестоимость),
+    // продажи/долги/касса/по агентам — зона директора и агентов, технологу не нужна
+    const TECH_REPORTS = ['stock', 'losses', 'output', 'costing'];
+    const ids = isAdmin ? Object.keys(REPORTS) : TECH_REPORTS;
+    return json(res, 200, ids.map(id => Object.assign({ id }, REPORTS[id])));
   }
   if (p === '/api/reports/run' && req.method === 'GET') {
     if (!isAdmin && role !== 'tech') return json(res, 403, { error: 'Отчёты доступны директору' });
     const type = u.searchParams.get('type');
+    if (!isAdmin && !['stock', 'losses', 'output', 'costing'].includes(type)) {
+      return json(res, 403, { error: 'Этот отчёт доступен только директору' });
+    }
     const builder = REPORT_BUILDERS[type];
     if (!builder) return json(res, 400, { error: 'Неизвестный отчёт' });
     const from = u.searchParams.get('from') || null;
