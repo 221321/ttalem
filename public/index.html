@@ -367,8 +367,10 @@ var listHtml=approved.map(function(d){
   }).join('');
   var histHtml=dayOps.length ? dayOps.slice().reverse().map(function(o){
     var ing=P(o.productId).recipe.map(function(it){ return '<div class="sub">'+esc(P(it.productId).name)+': '+fmt(it.qty)+' '+P(it.productId).unit+'</div>'; }).join('');
+    var ds=o.docStatus;
+    var docPill=ds ? (ds.status==='created' ? ' <span class="pill ok" title="'+esc(ds.docNumber||'')+'">1С №'+esc(ds.docNumber||'')+'</span>' : ' <span class="pill bad" title="'+esc(ds.message||'')+'">1С: ошибка</span>') : ' <span class="pill warn">1С: ожидает</span>';
     return card('ph'+o.id,
-      '<span><b>'+CAT(P(o.productId).type).icon+' '+esc(P(o.productId).name)+' × '+fmt(o.count)+'</b> <span class="sub">'+opTime(o)+'</span></span>',
+      '<span><b>'+CAT(P(o.productId).type).icon+' '+esc(P(o.productId).name)+' × '+fmt(o.count)+'</b> <span class="sub">'+opTime(o)+docPill+'</span></span>',
       ing
     );
 }).join('') : '<p class="sub">За этот период выпуска не было.</p>';
