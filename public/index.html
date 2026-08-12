@@ -118,7 +118,8 @@ header img.lg{height:26px;display:block}
 var TOKEN = sessionStorage.getItem('tok') || '';
 var ME = JSON.parse(sessionStorage.getItem('me') || 'null');
 var D = { products: [], stock: {}, sklads: [], alerts: [] };
-var screen = sessionStorage.getItem('screen') || 'work';
+var screen = sessionStorage.getItem('screen') || 'prod';
+if (screen === 'work') screen = 'prod'; // раздел "Обработка" убран — у кого-то в сессии могла остаться старая ссылка
 var pin = '', pickedUser = null;
 var exp = {}, busy = false;
 var wSel = null, wDone = null, wQ = '';
@@ -217,20 +218,20 @@ window.doLogin=async function(){
     var r=await api('/login','POST',{category:cat,pin:pinVal});
     TOKEN=r.token; ME=r.user;
     sessionStorage.setItem('tok',TOKEN); sessionStorage.setItem('me',JSON.stringify(ME));
-    screen=isCook(ME.role)?'work':ME.role==='agent'?'agent':ME.role==='tech'?'nom':'cost';
+    screen=isCook(ME.role)?'prod':ME.role==='agent'?'agent':ME.role==='tech'?'nom':'cost';
     await reload(); render();
   }catch(e){ toast(e.message); $('#loginpin').value=''; }
 };
 
 // ====== КАРКАС ======
 var NAVS={
-  cook:      [['work','⚖️','Обработка'],['prod','🥪','Выпуск'],['nom','🏷️','Продукты'],['stock','📋 ','Остатки']],
-  cook_prep: [['work','⚖️','Обработка'],['prod','🥪','Выпуск'],['nom','🏷️','Продукты'],['stock','📋 ','Остатки']],
-  cook_sand: [['work','⚖️','Обработка'],['prod','🥪','Выпуск'],['nom','🏷️','Продукты'],['stock','📋 ','Остатки']],
-  cook_hot:  [['work','⚖️','Обработка'],['prod','🥪','Выпуск'],['nom','🏷️','Продукты'],['stock','📋 ','Остатки']],
-  cook_baker:[['work','⚖️','Обработка'],['prod','🥪','Выпуск'],['nom','🏷️','Продукты'],['stock','📋 ','Остатки']],
-  cook_pastry:[['work','⚖️','Обработка'],['prod','🥪','Выпуск'],['nom','🏷️','Продукты'],['stock','📋 ','Остатки']],
-  cook_head: [['work','⚖️','Обработка'],['prod','🥪','Выпуск'],['nom','🏷️','Продукты'],['stock','📋 ','Остатки']],
+  cook:      [['prod','🥪','Выпуск'],['nom','🏷️','Продукты'],['stock','📋 ','Остатки']],
+  cook_prep: [['prod','🥪','Выпуск'],['nom','🏷️','Продукты'],['stock','📋 ','Остатки']],
+  cook_sand: [['prod','🥪','Выпуск'],['nom','🏷️','Продукты'],['stock','📋 ','Остатки']],
+  cook_hot:  [['prod','🥪','Выпуск'],['nom','🏷️','Продукты'],['stock','📋 ','Остатки']],
+  cook_baker:[['prod','🥪','Выпуск'],['nom','🏷️','Продукты'],['stock','📋 ','Остатки']],
+  cook_pastry:[['prod','🥪','Выпуск'],['nom','🏷️','Продукты'],['stock','📋 ','Остатки']],
+  cook_head: [['prod','🥪','Выпуск'],['nom','🏷️','Продукты'],['stock','📋 ','Остатки']],
   agent:     [['agent','🚚','Продажи']],
   tech:      [['orders','📝','Заказы'],['nom','🏷️','Продукты'],['wo','🧂','Специи'],['output','📊',  'Выработка'],['stock','📋','Остатки'],['reports','📈','Отчёты']],
   admin:     [['orders','📝','Заказы'],['sales','💵','Продажи'],['cost','💰','Калькуляция'],['output','📊','Выработка'],['stock','📋','Остатки'],['losses','📉','Потери'],['reports','📈','Отчёты'],['sync','🔄','1С'],['users','🔒','Доступы']]
@@ -491,6 +492,7 @@ function drawNomEdit(id,p){
 +'<label>Цех</label><select id="gdept">'+deptOpts+'</select>'
     +(isCook(ME.role)?'':'<label>Исходный продукт (только для Выработки ⚖️ — пары «сырьё → обработанное»)</label><select id="gs">'+srcOpts+'</select>')
     +(isCook(ME.role)?'':'<label>Код в 1С (заполняет менеджер)</label><input id="gc" value="'+esc(p.code1c||'')+'">')
+    +(!isCook(ME.role)&&p.type==='raw'?'<label>% отхода при чистке/нарезке (0 — если товар используется как есть)</label><input id="gwaste" type="number" min="0" max="99" step="1" inputmode="numeric" value="'+(p.wastePct||0)+'"><p class="sub" style="margin-top:2px">Например, помидор 10% — при списании по рецепту система спишет со склада на 10% больше сырого веса, чем указано в составе блюда.</p>':'')
     +'</div>'
 +(p.type==='process'
       ? '<div class="card"><p class="sub">Этот продукт — результат обработки (⚖️ Выработка). Остаток появится автоматически, когда повар взвесит вес до/после на экране «Обработка». Рецептура здесь не нужна.</p></div>'
@@ -547,6 +549,7 @@ window.stClear=function(){
   var body={type:$('#gt').value,unit:$('#gu').value,department:$('#gdept')?$('#gdept').value:'Кухня / Заготовки',recipe:editRecipe.filter(function(it){ return it.qty>0; })};
   if($('#gs')) body.sourceId=$('#gs').value||null;
   if($('#gc')) body.code1c=$('#gc').value.trim();
+  if($('#gwaste')) body.wastePct=+$('#gwaste').value||0;
   if(!$('#gn').disabled) body.name=$('#gn').value.trim();
   if(body.name==='') return toast('Введите наименование');
   try{
@@ -1248,7 +1251,7 @@ async function scrCost(){
             ?'<button class="btn sec sm" onclick="event.stopPropagation();recStatus(\''+d.productId+'\',\'reopen\',\'Вернуть на доработку?\')">🔓 На доработку</button>'
             :'<button class="btn sec sm" onclick="event.stopPropagation();recStatus(\''+d.productId+'\',\'approve\',\'Утвердить?\')">✅ Утвердить</button>';
           var items=d.items.map(function(i){
-            return '<div class="li"><span class="nm">'+esc(i.name)+(i.hasRecipe?' <span class="pill ok" style="font-size:10px">рецепт</span>':'')+'<div class="sub">'+fmt(i.qty)+' '+i.unit+' × '+money(i.unitCost)+'/'+i.unit+'</div></span><span class="vl">'+money(i.cost)+'</span></div>';
+            return '<div class="li"><span class="nm">'+esc(i.name)+(i.hasRecipe?' <span class="pill ok" style="font-size:10px">рецепт</span>':'')+(i.wastePct?' <span class="pill warn" style="font-size:10px">отход '+i.wastePct+'%</span>':'')+'<div class="sub">'+fmt(i.qty)+' '+i.unit+' × '+money(i.unitCost)+'/'+i.unit+(i.wastePct?' (спишется сырого больше на '+i.wastePct+'%)':'')+'</div></span><span class="vl">'+money(i.cost)+'</span></div>';
           }).join('');
           var margin=d.salePrice>0?d.salePrice-d.total:null;
           var marginPct=(margin!==null&&d.salePrice>0)?Math.round(margin/d.salePrice*1000)/10:null;
