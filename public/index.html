@@ -791,15 +791,15 @@ async function scrOutput(){
 }
 window.outSet=function(days){ var d=new Date(); outTo=d.toISOString().slice(0,10); d.setDate(d.getDate()-days); outFrom=d.toISOString().slice(0,10); render(); };
 
-// ====== Продажи (реализация) ======
-var saleFrom = null, saleTo = null, saleQty = '', salePriceInput = '', salePeriod = 0;
-var saleStatusFilter = 'all', saleSearchQ = '';
+// ====== Продажи (реализация) — только просмотр, погашение долга и отмена.
+// Саму продажу создают: торговый/экспедитор (агент), либо выпуск, либо импорт из 1С — форму ручного
+// оформления отсюда убрали, чтобы директор/менеджер не плодили продажи мимо этих трёх источников. ======
+var saleFrom = null, saleTo = null, salePeriod = 0;
+var saleStatusFilter = 'all', saleSearchQ = '', saleAgentFilter = '';
+function inPeriod(ts,from,to){ var d=(ts||'').slice(0,10); return d>=from&&d<=to; }
 async function scrSales(){
   var from=saleFrom||today(), to=saleTo||today();
-  var dishes=D.products.filter(function(p){ return p.type==='dish'; });
   var r=await api('/report/sales?from='+from+'&to='+to);
-  var multiDay = from!==to;
-  var dishOpts=dishes.map(function(d){ return '<option value="'+d.id+'" data-price="'+(d.salePrice||0)+'">'+esc(d.name)+' ('+(d.salePrice||0)+' ₸)</option>'; }).join('');
 
   // --- период + KPI ---
   var periodHtml='<div class="card">'
@@ -832,20 +832,34 @@ async function scrSales(){
       +'</div>';
   }
 
-  // --- форма продажи: кол-во и цена в один ряд, клиент — поиск/привязка к справочнику ---
-  agentClientsCache = await api('/clients').catch(function(){ return agentClientsCache; });
-  var formHtml='<div class="card"><b>Оформить продажу</b>'
-    +'<label>Блюдо</label><select id="saP" onchange="salePriceInput=D.products.find(function(p){return p.id===this.value}).salePrice||0;renderInPlace()">'+dishOpts+'</select>'
-    +'<div class="row">'
-      +'<div><label>Количество</label><input class="big" id="saQ" type="number" min="1" step="1" inputmode="numeric" value="'+saleQty+'" onfocus="this.select()"></div>'
-      +'<div><label>Цена, ₸</label><input class="big" id="saPrice" type="number" step="1" inputmode="decimal" value="'+salePriceInput+'"></div>'
-    +'</div>'
-    +agentClientBlock()
-    +'<div style="height:4px"></div><label style="display:flex;align-items:center;gap:6px;margin:10px 0 0"><input type="checkbox" id="saPaid" checked style="width:auto"> Оплачено</label>'
-    +'<div style="height:10px"></div><button class="btn" onclick="saleSave()">Продать</button></div>';
+  // --- фильтр по МОЛ (материально ответственное лицо — торговый/экспедитор, ФИО как в 1С) ---
+  var agentOpts='<option value="">Все МОЛ</option>'+r.byAgent.slice().sort(function(a,b){ return a.sellerName.localeCompare(b.sellerName,'ru'); })
+    .map(function(a){ return '<option value="'+a.sellerId+'" '+(saleAgentFilter===a.sellerId?'selected':'')+'>'+esc(a.sellerName)+' ('+a.salesCount+')</option>'; }).join('');
+  var agentFilterHtml=r.byAgent.length?'<div class="card"><label>МОЛ (продавец/экспедитор)</label><select onchange="saleAgentFilter=this.value;renderInPlace()">'+agentOpts+'</select></div>':'';
 
-  // --- список продаж: таблица с фильтром по статусу и поиском (как в Жайыке) ---
+  // --- сверка с 1С по реализации за выбранный период (и, если выбран, по МОЛ) ---
+  var sync1c=await api('/1c/sales-diff').catch(function(){ return null; });
+  var by=function(list){ return (list||[]).filter(function(x){ return inPeriod(x.ts,from,to)&&(!saleAgentFilter||x.sellerId===saleAgentFilter); }); };
+  var sync1cHtml='';
+  if(sync1c){
+    var mRows=by(sync1c.matchedRows), npRows=by(sync1c.notPosted), miRows=by(sync1c.missingIn1c);
+    sync1cHtml=card('sync1c',
+      '<span style="flex:1"><b>🔄 Сверка с 1С · Реализация</b><div class="sub">последняя сверка: '+new Date(sync1c.ts).toLocaleString('ru-RU')+'</div></span>'
+        +'<span class="pill '+(npRows.length||miRows.length?'warn':'ok')+'">за период: '+mRows.length+' ок'+(npRows.length?' · '+npRows.length+' не проведено':'')+(miRows.length?' · '+miRows.length+' нет в 1С':'')+'</span>',
+      (npRows.length?'<div class="hl">Создано в 1С, но не проведено ('+npRows.length+')</div>'
+        +npRows.map(function(it){ return '<div class="li"><span class="nm">№'+esc(it.docNumber||'')+' · '+esc(it.sellerName||'')+(it.client?' · '+esc(it.client):'')+'</span><span class="vl">'+money(it.sum)+'</span></div>'; }).join(''):'')
+      +(miRows.length?'<div class="hl">Есть у нас, документа в 1С нет ('+miRows.length+')</div>'
+        +miRows.map(function(it){ return '<div class="li"><span class="nm">'+esc(it.sellerName||'')+(it.client?' · '+esc(it.client):'')+'</span><span class="vl">'+money(it.sum)+'</span></div>'; }).join(''):'')
+      +(!npRows.length&&!miRows.length?'<p class="sub">За выбранный период расхождений с 1С нет.</p>':'')
+      +'<button class="btn sec sm" style="margin-top:8px" onclick="event.stopPropagation();go(\'sync\')">Открыть полную сверку в разделе «1С»</button>'
+    );
+  } else if(ME.role==='admin'){
+    sync1cHtml='<p class="sub">Сверка с 1С по реализации ещё не запускалась — раздел «1С» → «Сверка реализации».</p>';
+  }
+
+  // --- список продаж: таблица с фильтром по статусу, МОЛ и поиском ---
   var filteredRows = r.rows.filter(function(s){
+    if(saleAgentFilter&&s.sellerId!==saleAgentFilter) return false;
     if(saleStatusFilter==='paid') return s.paid;
     if(saleStatusFilter==='debt') return !s.paid;
     return true;
@@ -886,7 +900,7 @@ async function scrSales(){
       }).join('')
       +'</tbody></table></div>';
   }
-  return '<h2>💵 Продажи</h2>'+periodHtml+cashHtml+formHtml+'<div class="hl">Продажи за период</div>'+statusTabsHtml+searchHtmlSales+rowsHtml;
+  return '<h2>💵 Продажи</h2>'+periodHtml+cashHtml+agentFilterHtml+sync1cHtml+'<div class="hl">Продажи за период</div>'+statusTabsHtml+searchHtmlSales+rowsHtml;
 }
 window.saleSet=function(days){ salePeriod=days; var d=new Date(); saleTo=d.toISOString().slice(0,10); d.setDate(d.getDate()-days); saleFrom=d.toISOString().slice(0,10); render(); };
 window.salePayPrompt=async function(id){
@@ -973,17 +987,7 @@ window.reportsDownloadCsv=async function(){
     URL.revokeObjectURL(url);
   }catch(e){ toast(e.message); }
 };
-window.saleSave=async function(){
-  var pid=$('#saP').value, qty=+$('#saQ').value, price=$('#saPrice').value, paid=$('#saPaid').checked;
-  if(!(qty>0)) return toast('Введите количество');
-  var payload={type:'sale',productId:pid,qty:qty,price:price,paid:paid};
-  if(agentClientId){ payload.clientId=agentClientId; }
-  else if(agentClientQ&&agentClientQ.trim()){ payload.client=agentClientQ.trim(); } // ввёл текст, но не выбрал/не добавил из списка — уходит как раньше, просто текстом
-  try{
-    await api('/ops','POST',payload);
-    toast('✅ Продажа оформлена'); saleQty=''; agentClientId=null; agentClientQ=''; await reload(); render();
-  }catch(e){ toast(e.message); }
-};
+
 window.saleCancel=async function(id){
   if(!confirm('Отменить продажу? Товар вернётся на склад, из выручки и кассы она пропадёт. Действие необратимо (кроме как оформить продажу заново).')) return;
   try{
