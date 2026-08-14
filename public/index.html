@@ -613,7 +613,7 @@ async function scrInv(){
   var depts=DEPARTMENTS.filter(function(d){ return D.products.some(function(p){ return p.department===d; }); });
   if(!invDept||depts.indexOf(invDept)===-1) invDept=depts[0]||'';
   var isAdmin=ME.role==='admin';
-  var tabsHtml=depts.length>1?'<div class="tabbar">'+depts.map(function(d){ return '<button class="'+(invDept===d?'on':'')+'" onclick="invDept=\''+esc(d)+'\';invVals={};renderInPlace()">'+esc(d)+'</button>'; }).join('')+'</div>':'';
+  var tabsHtml=depts.length>1?'<div class="tabbar">'+depts.map(function(d){ return '<button class="'+(invDept===d?'on':'')+'" onclick="invDept=\''+esc(d)+'\';renderInPlace()">'+esc(d)+'</button>'; }).join('')+'</div>':'';
   var rows=D.products.filter(function(p){ return p.department===invDept; });
   var listHtml=rows.map(function(p){
     var st=D.stock[p.id];
@@ -653,13 +653,16 @@ window.invChange=function(pid,v){ invVals[pid]=v===''?'':(+v); };
 window.invSave=async function(){
   if(busy) return;
   var mainSkId=(D.sklads&&D.sklads[0]?D.sklads[0].id:'sk1');
-  var items=Object.keys(invVals).filter(function(pid){ return invVals[pid]!==''&&invVals[pid]!=null; }).map(function(pid){ return {productId:pid,skladId:mainSkId,factQty:+invVals[pid]}; });
+  var deptPids={}; D.products.filter(function(p){ return p.department===invDept; }).forEach(function(p){ deptPids[p.id]=true; });
+  var pids=Object.keys(invVals).filter(function(pid){ return deptPids[pid]&&invVals[pid]!==''&&invVals[pid]!=null; });
+  var items=pids.map(function(pid){ return {productId:pid,skladId:mainSkId,factQty:+invVals[pid]}; });
   if(!items.length) return toast('Измените хотя бы одно значение');
   if(!confirm('Сохранить инвентаризацию по цеху «'+esc(invDept)+'»? Позиций: '+items.length+'.')) return;
   try{
     busy=true;
     await api('/ops','POST',{type:'inventory',items:items});
-    toast('✅ Инвентаризация сохранена'); invVals={}; await reload(); render();
+    pids.forEach(function(pid){ delete invVals[pid]; });
+    toast('✅ Инвентаризация сохранена'); await reload(); render();
   }catch(e){ toast(e.message); }
   busy=false;
 };
