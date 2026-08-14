@@ -1458,7 +1458,9 @@ function route(req, res, u, data) {
     if (data.type === 'inventory' && !isAdmin) return json(res, 403, { error: 'Инвентаризацию проводит директор' });
     if (data.type === 'writeoff' && isCook(role)) return json(res, 403, { error: 'Акт списания оформляет менеджер или директор' });
     if (data.type === 'move') return json(res, 400, { error: 'Перемещение между складами отключено — теперь один физический склад' });
-    if (data.type === 'sale' && isCook(role)) return json(res, 403, { error: 'Продажу оформляет менеджер или директор' });
+    // Продажу можно создать только выпуском (нет отдельного шага), торговым/экспедитором (agent) или импортом из 1С (/api/1c/sales-import).
+    // Директор и менеджер продажи больше не создают вручную — только смотрят историю, гасят долг и отменяют.
+    if (['sale', 'waybill'].includes(data.type) && !isAgent(role)) return json(res, 403, { error: 'Продажу оформляет только торговый/экспедитор. Директору и менеджеру доступны история продаж и сверка с 1С в разделе «Продажи».' });
     const fn = OPS[data.type];
     if (!fn) return json(res, 400, { error: 'Неизвестная операция' });
     const rec = fn(data, user);
@@ -1855,22 +1857,26 @@ if (p === '/api/ops' && req.method === 'GET') {
       if (!inc) return; // разберём отдельно ниже как missingIn1c
       seenRefs.add(ref);
       db.docStatus[ref] = { status: 'created', docNumber: inc.docNumber || '', message: '', ts: new Date().toISOString() };
-      const row = { ref, docNumber: inc.docNumber || '', sum: o.sum, client: o.client || '', ts: o.ts };
+      const seller = db.users.find(u => u.id === o.userId);
+      const row = { ref, docNumber: inc.docNumber || '', sum: o.sum, client: o.client || '', ts: o.ts, sellerId: o.userId, sellerName: seller ? seller.name : '?' };
       if (inc.posted === false) notPosted.push(row); else matched.push(row);
     });
     const missingIn1c = [];
     db.operations.filter(o => (o.type === 'sale' || o.type === 'waybill') && !o.cancelled).forEach(o => {
       const ref = o.type + '|' + o.id;
-      if (!byRef[ref]) missingIn1c.push({ ref, sum: o.sum, client: o.client || '', ts: o.ts, docStatus: db.docStatus[ref] || null });
+      if (!byRef[ref]) {
+        const seller = db.users.find(u => u.id === o.userId);
+        missingIn1c.push({ ref, sum: o.sum, client: o.client || '', ts: o.ts, sellerId: o.userId, sellerName: seller ? seller.name : '?', docStatus: db.docStatus[ref] || null });
+      }
     });
     const notInSkyMeal = incoming.filter(item => !seenRefs.has(item.ref) && !db.operations.some(o => (o.type + '|' + o.id) === item.ref));
-    const result = { matched: matched.length, notPosted, missingIn1c, notInSkyMeal };
+    const result = { matched: matched.length, matchedRows: matched, notPosted, missingIn1c, notInSkyMeal };
     db.lastSalesDiff = Object.assign({ ts: new Date().toISOString(), totalIncoming: incoming.length }, result);
     save();
     return json(res, 200, result);
   }
   if (p === '/api/1c/sales-diff' && req.method === 'GET') {
-    if (!isAdmin) return json(res, 403, { error: 'Только директор' });
+    if (!isAdmin && role !== 'manager') return json(res, 403, { error: 'Только директор и менеджер' });
     return json(res, 200, db.lastSalesDiff || null);
   }
 
