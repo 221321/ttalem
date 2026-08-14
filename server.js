@@ -1369,6 +1369,7 @@ function route(req, res, u, data) {
     if (!target) return json(res, 404, { error: 'Не найден' });
     const newPin = String(data.pin || '').trim();
     if (!/^\d{4,8}$/.test(newPin)) return json(res, 400, { error: 'PIN — от 4 до 8 цифр' });
+    if (db.users.some(u => u.id !== target.id && u.pin === newPin)) return json(res, 400, { error: 'Такой PIN уже занят другим сотрудником' });
     target.pin = newPin;
     save();
     return json(res, 200, { ok: true });
