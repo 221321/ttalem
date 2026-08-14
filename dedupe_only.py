@@ -66,6 +66,19 @@ db["stock"] = new_stock
 for op in db.get("operations", []):
     if op.get("productId") in remap:
         op["productId"] = remap[op["productId"]]
+    # накладные и акты списания хранят товары не в op.productId, а в op.items[]
+    for item in op.get("items", []) or []:
+        if item.get("productId") in remap:
+            item["productId"] = remap[item["productId"]]
+    # выпуск (production) хранит списанное сырьё в op.writeoffs[]
+    for wo in op.get("writeoffs", []) or []:
+        if wo.get("productId") in remap:
+            wo["productId"] = remap[wo["productId"]]
+    # обработка (processing) хранит сырьё/п-ф отдельными полями
+    if op.get("rawId") in remap:
+        op["rawId"] = remap[op["rawId"]]
+    if op.get("semiId") in remap:
+        op["semiId"] = remap[op["semiId"]]
 for order in db.get("orders", []):
     if order.get("productId") in remap:
         order["productId"] = remap[order["productId"]]
@@ -84,10 +97,25 @@ for p in db["products"]:
             broken.append((p["name"], "recipe", item["productId"]))
     if p.get("sourceId") and p["sourceId"] not in existing_ids:
         broken.append((p["name"], "sourceId", p["sourceId"]))
+for op in db.get("operations", []):
+    label = op.get("type", "?") + "|" + str(op.get("id", "?"))
+    if op.get("productId") and op["productId"] not in existing_ids:
+        broken.append((label, "productId", op["productId"]))
+    for item in op.get("items", []) or []:
+        if item.get("productId") and item["productId"] not in existing_ids:
+            broken.append((label, "items.productId", item["productId"]))
+    for wo in op.get("writeoffs", []) or []:
+        if wo.get("productId") and wo["productId"] not in existing_ids:
+            broken.append((label, "writeoffs.productId", wo["productId"]))
+    if op.get("rawId") and op["rawId"] not in existing_ids:
+        broken.append((label, "rawId", op["rawId"]))
+    if op.get("semiId") and op["semiId"] not in existing_ids:
+        broken.append((label, "semiId", op["semiId"]))
+
 if broken:
     print("!!! БИТЫЕ ССЫЛКИ:", broken)
 else:
-    print("Ссылки в рецептах и sourceId целые, битых нет.")
+    print("Ссылки в рецептах, sourceId и операциях целые, битых нет.")
 
 with open(DB_PATH, "w", encoding="utf-8") as f:
     json.dump(db, f, ensure_ascii=False, indent=2)
