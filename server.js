@@ -610,18 +610,20 @@ function opExchange(o, user) {
   const qtyOut = r2(+o.qtyOut || 0);   // свежего отдано взамен
   const qtyBack = r2(+o.qtyBack || 0); // просроченного забрано с точки
   if (!(qtyOut > 0) && !(qtyBack > 0)) throw new Error('Укажите количество свежего или забранного');
+  let costOut = 0; // себестоимость бесплатной замены — реальные потери компании от обмена,
+  // раньше нигде не отображалась (ни в "Потери и списания", ни суммой в ведомости)
   if (qtyOut > 0) {
     const s = agentStockOf(user.id, o.productId);
     if (s.qty + 0.001 < qtyOut) throw new Error('Недостаточно «' + p.name + '» в остатке: есть ' + r2(s.qty) + ', требуется ' + qtyOut);
-    const val = r2(agentUnitCost(user.id, o.productId) * qtyOut);
+    costOut = r2(agentUnitCost(user.id, o.productId) * qtyOut);
     s.qty = r2(s.qty - qtyOut);
-    s.value = r2(Math.max(0, s.value - val));
+    s.value = r2(Math.max(0, s.value - costOut));
   }
   if (qtyBack > 0) {
     if (!db.agentBrak[user.id]) db.agentBrak[user.id] = [];
     db.agentBrak[user.id].push({ productId: o.productId, qty: qtyBack, ts: new Date().toISOString(), client: (o.client || '').trim() });
   }
-  return { type: 'exchange', productId: o.productId, name: p.name, unit: p.unit, qtyOut, qtyBack, client: (o.client || '').trim() };
+  return { type: 'exchange', productId: o.productId, name: p.name, unit: p.unit, qtyOut, qtyBack, costOut, client: (o.client || '').trim() };
 }
 
 // ---------- сдача остатка при закрытии смены: экспедитор указывает фактическое количество
@@ -714,6 +716,33 @@ function buildAgentDayReport(userId, from, to) {
   const stillOnBoard = db.agentStock[userId] ? Object.values(db.agentStock[userId]).some(s => s.qty > 0.0001) : false;
   const brakPending = (db.agentBrak[userId] || []).length;
   return { rows, money, stillOnBoard, brakPending };
+}
+// обёртка в общую форму отчётов {title, totals, tables} — чтобы жила в «Отчёты» вместе с
+// «Долги»/«По агентам»/«Касса», через общий движок (CSV, печать), а не отдельной карточкой
+// на экране «Продажи», где директор её не ожидал найти.
+function buildAgentDayReportWrapped(from, to, role, userId) {
+  if (!userId) {
+    return { title: 'Ведомость по экспедитору', totals: [], tables: [], note: 'Выберите экспедитора выше.' };
+  }
+  const target = db.users.find(u => u.id === userId);
+  const r = buildAgentDayReport(userId, from, to);
+  const warnings = [];
+  if (r.stillOnBoard) warnings.push('остаток не сдан');
+  if (r.brakPending) warnings.push('есть несписанные возвраты по сроку годности');
+  return {
+    title: 'Ведомость по экспедитору' + (target ? ' — ' + target.name : '') + (from || to ? ' (' + (from || '…') + ' — ' + (to || '…') + ')' : ''),
+    totals: [
+      { label: 'Выручка', value: r.money.revenue, money: true },
+      { label: 'Наличные', value: r.money.cash, money: true },
+      { label: 'QR/карта', value: r.money.qr, money: true },
+      { label: 'Долг', value: r.money.debt, money: true }
+    ],
+    tables: [{
+      title: 'Товары: взял / продал / обмен / сдал' + (warnings.length ? ' — ⚠ ' + warnings.join(', ') : ''),
+      headers: ['Товар', 'Взял', 'Продал', 'Отдал по обмену', 'Забрал по обмену', 'Сдал', 'Расхождение'],
+      rows: r.rows.map(x => [x.name, x.issued, x.sold, x.exOut, x.exBack, x.returned, x.diff])
+    }]
+  };
 }
 
 function reportSales(from, to) {
@@ -834,26 +863,51 @@ function reportLosses(from, to) {
     };
   });
 
-  const writeoffs = ops.filter(o => o.type === 'writeoff').map(o => ({
+  // ИСПРАВЛЕНО: списание возвратов по сроку годности (agent_brak_writeoff) раньше сюда не
+  // попадало вообще — искался только type==='writeoff', а это отдельный тип операции. Директор
+  // мог оформить списание просрочки хоть сто раз, в "Потери и списания" всегда был бы 0.
+  const writeoffs = ops.filter(o => o.type === 'writeoff' || o.type === 'agent_brak_writeoff').map(o => ({
     ts: o.ts, reason: o.reason,
     items: (o.items || []).map(it => { const p = product(it.productId); return { name: p ? p.name : '?', qty: it.qty, sum: it.sum }; }),
     sum: o.sum
   }));
+
+  // потери от обмена по сроку годности: свежее отдаётся клиенту бесплатно (0 ₸, не продажа) —
+  // это реальный расход компании, который раньше нигде не показывался суммой, только штуками
+  // в ведомости конкретного экспедитора. Считаем отдельно от writeoffs, т.к. это происходит
+  // сразу на точке, а не разовым актом при закрытии смены.
+  const exchangeLosses = ops.filter(o => o.type === 'exchange' && o.costOut > 0).map(o => {
+    const p = product(o.productId);
+    return { ts: o.ts, name: p ? p.name : '?', qty: o.qtyOut, sum: o.costOut, client: o.client || '' };
+  });
 
   const shortages = [];
   ops.filter(o => o.type === 'inventory').forEach(o => {
     (o.items || []).forEach(r => {
       if (r.diff < -0.001) {
         const p = product(r.productId);
-        shortages.push({ ts: o.ts, name: p ? p.name : '?', diff: r.diff, diffSum: r.diffSum });
+        shortages.push({ ts: o.ts, name: p ? p.name : '?', diff: r.diff, diffSum: r.diffSum, source: 'инвентаризация' });
+      }
+    });
+  });
+  // ИСПРАВЛЕНО: недостача при сдаче остатка экспедитором (agent_return) тоже нигде не считалась —
+  // тот же класс бага, что и со списаниями выше. Экспедитор мог не довезти товар, а директор
+  // узнал бы об этом только заглянув в конкретную ведомость, не из общего отчёта по потерям.
+  ops.filter(o => o.type === 'agent_return').forEach(o => {
+    (o.items || []).forEach(r => {
+      if (r.diff < -0.001) {
+        const p = product(r.productId);
+        const uc = unitCost(r.productId);
+        shortages.push({ ts: o.ts, name: p ? p.name : '?', diff: r.diff, diffSum: r2(r.diff * uc), source: 'сдача остатка' });
       }
     });
   });
 
   return {
-    processing, writeoffs, shortages,
+    processing, writeoffs, exchangeLosses, shortages,
     totals: {
       writeoffSum: r2(writeoffs.reduce((a, w) => a + (w.sum || 0), 0)),
+      exchangeLossSum: r2(exchangeLosses.reduce((a, e) => a + (e.sum || 0), 0)),
       shortageSum: r2(shortages.reduce((a, s) => a + Math.abs(s.diffSum || 0), 0))
     }
   };
@@ -942,14 +996,15 @@ function reportPlan() {
 // из этого бесплатно получаются и таблицы на экране, и CSV, и печать в PDF.
 // ============================================================
 const REPORTS = {
-  sales:   { name: 'Продажи и прибыль', period: true },
-  debts:   { name: 'Долги по клиентам', period: false },
-  byagent: { name: 'По торговым/агентам', period: true },
-  cash:    { name: 'Касса и инкассация', period: true },
-  stock:   { name: 'Остатки на складах', period: false },
-  losses:  { name: 'Потери и списания', period: true },
-  output:  { name: 'Выработка', period: true },
-  costing: { name: 'Калькуляция себестоимости', period: false }
+  sales:    { name: 'Продажи и прибыль', period: true },
+  debts:    { name: 'Долги по клиентам', period: false },
+  byagent:  { name: 'По торговым/агентам', period: true },
+  cash:     { name: 'Касса и инкассация', period: true },
+  agentday: { name: 'Ведомость по экспедитору', period: true, needsAgent: true },
+  stock:    { name: 'Остатки на складах', period: false },
+  losses:   { name: 'Потери и списания', period: true },
+  output:   { name: 'Выработка', period: true },
+  costing:  { name: 'Калькуляция себестоимости', period: false }
 };
 
 function money2(v) { return r2(v || 0); }
@@ -1088,11 +1143,16 @@ function buildReportLosses(from, to) {
   const r = reportLosses(from, to);
   return {
     title: 'Потери и списания' + (from || to ? ' (' + (from || '…') + ' — ' + (to || '…') + ')' : ' (за всё время)'),
-    totals: [{ label: 'Списано на сумму', value: r.totals.writeoffSum, money: true }, { label: 'Недостача на сумму', value: r.totals.shortageSum, money: true }],
+    totals: [
+      { label: 'Списано на сумму', value: r.totals.writeoffSum, money: true },
+      { label: 'Потери от обмена по сроку годности', value: r.totals.exchangeLossSum, money: true },
+      { label: 'Недостача на сумму', value: r.totals.shortageSum, money: true }
+    ],
     tables: [
       { title: 'Усушка при обработке', headers: ['Дата', 'Сырьё', 'П/ф', 'До', 'После', 'Потеря', '%'], rows: r.processing.map(x => [x.ts.slice(0, 10), x.rawName, x.semiName, x.qtyBefore, x.qtyAfter, x.lossQty, x.lossPct]) },
-      { title: 'Списания', headers: ['Дата', 'Причина', 'Состав', 'Сумма'], rows: r.writeoffs.map(x => [x.ts.slice(0, 10), x.reason || '', x.items.map(i => i.name + ' ×' + i.qty).join(', '), x.sum]) },
-      { title: 'Недостачи по инвентаризации', headers: ['Дата', 'Товар', 'Расхождение', 'Сумма'], rows: r.shortages.map(x => [x.ts.slice(0, 10), x.name, x.diff, x.diffSum]) }
+      { title: 'Списания (в т.ч. возвраты по сроку годности)', headers: ['Дата', 'Причина', 'Состав', 'Сумма'], rows: r.writeoffs.map(x => [x.ts.slice(0, 10), x.reason || '', x.items.map(i => i.name + ' ×' + i.qty).join(', '), x.sum]) },
+      { title: 'Обмен по сроку годности — бесплатная замена клиенту', headers: ['Дата', 'Товар', 'Точка/клиент', 'Кол-во', 'Сумма'], rows: r.exchangeLosses.map(x => [x.ts.slice(0, 10), x.name, x.client || '—', x.qty, x.sum]) },
+      { title: 'Недостачи (инвентаризация и сдача остатка экспедитором)', headers: ['Дата', 'Товар', 'Источник', 'Расхождение', 'Сумма'], rows: r.shortages.map(x => [x.ts.slice(0, 10), x.name, x.source, x.diff, x.diffSum]) }
     ]
   };
 }
@@ -1128,6 +1188,7 @@ const REPORT_BUILDERS = {
   debts: () => buildReportDebts(),
   byagent: (from, to) => buildReportByAgent(from, to),
   cash: (from, to) => buildReportCash(from, to),
+  agentday: (from, to, role, userId) => buildAgentDayReportWrapped(from, to, role, userId),
   stock: (from, to, role) => buildReportStock(role),
   losses: (from, to) => buildReportLosses(from, to),
   output: (from, to) => buildReportOutput(from, to),
@@ -1862,7 +1923,7 @@ if (p === '/api/ops' && req.method === 'GET') {
     if (!isAdmin && role !== 'tech' && role !== 'manager') return json(res, 403, { error: 'Отчёты доступны директору' });
     // технологу — производственная зона, менеджеру — зона продаж/касса, остальное только директору
     const TECH_REPORTS = ['stock', 'losses', 'output', 'costing'];
-    const MANAGER_REPORTS = ['sales', 'debts', 'byagent', 'cash'];
+    const MANAGER_REPORTS = ['sales', 'debts', 'byagent', 'cash', 'agentday', 'losses'];
     const ids = isAdmin ? Object.keys(REPORTS) : (role === 'tech' ? TECH_REPORTS : MANAGER_REPORTS);
     return json(res, 200, ids.map(id => Object.assign({ id }, REPORTS[id])));
   }
@@ -1870,7 +1931,7 @@ if (p === '/api/ops' && req.method === 'GET') {
     if (!isAdmin && role !== 'tech' && role !== 'manager') return json(res, 403, { error: 'Отчёты доступны директору' });
     const type = u.searchParams.get('type');
     const TECH_TYPES = ['stock', 'losses', 'output', 'costing'];
-    const MANAGER_TYPES = ['sales', 'debts', 'byagent', 'cash'];
+    const MANAGER_TYPES = ['sales', 'debts', 'byagent', 'cash', 'agentday', 'losses'];
     const allowedTypes = role === 'tech' ? TECH_TYPES : MANAGER_TYPES;
     if (!isAdmin && !allowedTypes.includes(type)) {
       return json(res, 403, { error: 'Этот отчёт доступен только директору' });
@@ -1879,8 +1940,9 @@ if (p === '/api/ops' && req.method === 'GET') {
     if (!builder) return json(res, 400, { error: 'Неизвестный отчёт' });
     const from = u.searchParams.get('from') || null;
     const to = u.searchParams.get('to') || null;
+    const reportUserId = u.searchParams.get('userId') || null;
     let report;
-    try { report = builder(from, to, role); }
+    try { report = builder(from, to, role, reportUserId); }
     catch (e) { return json(res, 500, { error: 'Ошибка построения отчёта: ' + e.message }); }
     if (u.searchParams.get('format') === 'csv') {
       const csv = reportToCsv(report);
