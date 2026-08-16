@@ -143,7 +143,8 @@ var agentClientId = null, agentClientQ = '', agentClientsCache = [];
 var docCnt = {}, docPrice = {}; // заявка: {productId: qty}/{productId: price} — тот же принцип, что loadCnt на "Приём товара"
 var agentCash = 0, agentQr = 0, agentFrom = null, agentTo = null;
 var agentStockCache = []; // остаток экспедитора на борту — то, что взял сам
-var agentExProduct = null, agentExQtyOut = 1, agentExQtyBack = 1, agentExClient = ''; // обмен по сроку годности
+var agentExClient = ''; // возврат по сроку годности: точка/клиент
+var retOutCnt = {}, retBackCnt = {}; // {productId: qty} — отдано свежего / забрано просроченного, тот же принцип, что docCnt
 var myLoadStockCache = [];
 var loadCnt = {}; // экспедитор: приём товара — {productId: qty}, тот же паттерн, что pCnt на "Выпуске"
 var agentsCache = [];
@@ -1293,26 +1294,39 @@ function agentDocScreen(){
 }
 
 function agentReturnScreen(){
-  var dishes=agentStockCache;
   var body='<button class="btn sec sm" style="margin-bottom:10px" onclick="agentBackToOverview()">← Назад</button>';
-  if(!agentExProduct){
-    var exRes=agentQ?filterList(dishes,agentQ).slice(0,20):dishes.slice(0,20);
-    body+='<div class="search"><input id="agSearch" placeholder="Найти товар..." value="'+esc(agentQ)+'" oninput="agentSearch(this.value)" autocomplete="off"><span class="clr" onclick="agentClear()" style="display:'+(agentQ?'block':'none')+'">✕</span></div>'
-      +'<div class="srlist">'+(exRes.map(function(p){ return '<div class="sritem" onclick="agentExPick(\''+p.productId+'\')">'+CAT(p.type).icon+' '+esc(p.name)+' <span class="sub">'+fmt(p.qty)+' '+p.unit+' в остатке</span></div>'; }).join('')||'<div class="sritem sub">'+(dishes.length?'Ничего не найдено':'Остаток пуст — сначала оформите приём товара на главном экране.')+'</div>')+'</div>';
+  if(!agentStockCache.length){
+    body+='<p class="sub">Список товаров пуст — сначала оформите приём товара на главном экране.</p>';
   } else {
-    var exP=P(agentExProduct);
-    body+='<span class="pill ok">'+esc(exP.name)+'</span>'
-      +'<label>Отдано свежего, '+exP.unit+'</label><input class="big" id="exOut" type="number" step="0.01" inputmode="decimal" value="'+agentExQtyOut+'" oninput="agentExCalc()">'
-      +'<label>Забрано просроченного, '+exP.unit+'</label><input class="big" id="exBack" type="number" step="0.01" inputmode="decimal" value="'+agentExQtyBack+'" oninput="agentExCalc()">'
-      +'<label>Точка / клиент (необязательно)</label><input id="exClient" type="text" value="'+esc(agentExClient)+'" placeholder="Название точки" oninput="agentExCalc()">'
-      +'<p class="sub" style="margin-top:8px">Возврат — не продажа, 0 ₸. Просроченное спишется одним актом при сдаче смены.</p>'
-      +'<div style="height:10px"></div><button class="btn" onclick="agentExSave()">Оформить возврат</button>'
-      +'<button class="btn sec sm" style="margin-top:8px" onclick="agentExProduct=null;renderInPlace()">← Выбрать другой товар</button>';
+    // тот же принцип, что и в "Заявке": весь список сразу, степпер в строке. Но тут без потолка
+    // по остатку и без надписи "в остатке" — возврат не списывается с остатка на месте, это не
+    // ограничение по количеству на руках (просроченное могло быть отдано клиенту давно).
+    body+='<div class="search"><input id="retSearch" placeholder="Найти товар..." oninput="retSearch(this.value)" autocomplete="off"><span class="clr" id="retSearchClr" onclick="retClearSearch()">✕</span></div>'
+      +agentStockCache.map(function(p){
+        var out=retOutCnt[p.productId]||0, back=retBackCnt[p.productId]||0;
+        return '<div class="li ret-item" data-name="'+esc(p.name.toLowerCase())+'" style="align-items:flex-start;flex-direction:column;gap:8px">'
+          +'<span class="nm">'+esc(p.name)+'</span>'
+          +'<div class="row">'
+          +'<div><label class="sub">Отдано свежего</label><span class="step">'
+            +'<button onclick="retStep(\''+p.productId+'\',\'out\',-1)">−</button>'
+            +'<input type="number" inputmode="numeric" min="0" value="'+out+'" style="width:52px;text-align:center;border:1px solid var(--line);border-radius:8px;padding:9px 2px;font-size:19px;font-weight:600" onfocus="this.select()" onchange="retSetCnt(\''+p.productId+'\',\'out\',this.value)">'
+            +'<button onclick="retStep(\''+p.productId+'\',\'out\',1)">+</button>'
+          +'</span></div>'
+          +'<div><label class="sub">Забрано просроченного</label><span class="step">'
+            +'<button onclick="retStep(\''+p.productId+'\',\'back\',-1)">−</button>'
+            +'<input type="number" inputmode="numeric" min="0" value="'+back+'" style="width:52px;text-align:center;border:1px solid var(--line);border-radius:8px;padding:9px 2px;font-size:19px;font-weight:600" onfocus="this.select()" onchange="retSetCnt(\''+p.productId+'\',\'back\',this.value)">'
+            +'<button onclick="retStep(\''+p.productId+'\',\'back\',1)">+</button>'
+          +'</span></div>'
+          +'</div></div>';
+      }).join('');
   }
+  body+='<label style="margin-top:14px">Точка / клиент (необязательно)</label><input id="retClient" type="text" value="'+esc(agentExClient)+'" placeholder="Название точки" oninput="agentExClient=this.value">'
+    +'<p class="sub" style="margin-top:8px">Возврат — не продажа, 0 ₸. Просроченное спишется одним актом при сдаче смены.</p>'
+    +'<div style="height:10px"></div><button class="btn" onclick="agentReturnSaveAll()">Оформить возврат</button>';
   return '<h2>🔄 Новый возврат</h2><div class="card">'+body+'</div>';
 }
 window.agentOpenDoc=function(){ agentSubScreen='doc'; docCnt={}; docPrice={}; agentClientId=null; agentClientQ=''; agentCash=0; agentQr=0; renderInPlace(); };
-window.agentOpenReturn=function(){ agentSubScreen='return'; agentExProduct=null; agentExQtyOut=1; agentExQtyBack=1; agentExClient=''; agentQ=''; renderInPlace(); };
+window.agentOpenReturn=function(){ agentSubScreen='return'; retOutCnt={}; retBackCnt={}; agentExClient=''; renderInPlace(); };
 window.agentBackToOverview=function(){ agentSubScreen=null; renderInPlace(); };
 
 async function scrAgent(){
@@ -1510,21 +1524,40 @@ window.agentPayDebt=async function(id){
 };
 window.agentSetRange=function(days){ var d=new Date(); agentTo=d.toISOString().slice(0,10); d.setDate(d.getDate()-days); agentFrom=d.toISOString().slice(0,10); render(); };
 
-// --- обмен по сроку годности ---
-window.agentExPick=function(id){ agentExProduct=id; agentExQtyOut=1; agentExQtyBack=1; agentExClient=''; renderInPlace(); };
-window.agentExCalc=function(){
-  agentExQtyOut=+($('#exOut')?$('#exOut').value:1)||0;
-  agentExQtyBack=+($('#exBack')?$('#exBack').value:0)||0;
-  agentExClient=$('#exClient')?$('#exClient').value:'';
+// --- возврат по сроку годности: список сразу, степпер в строке по каждому товару ---
+window.retSearch=function(v){
+  filterDom(v,'ret-item');
+  var c=$('#retSearchClr');
+  if(c) c.style.display=v?'block':'none';
 };
-window.agentExSave=async function(){
-  agentExCalc();
-  if(!(agentExQtyOut>0)&&!(agentExQtyBack>0)) return toast('Укажите количество свежего или забранного');
+window.retClearSearch=function(){
+  var i=$('#retSearch');
+  if(i) i.value='';
+  retSearch('');
+  if(i) i.focus();
+};
+window.retStep=function(id,which,d){
+  var obj=which==='out'?retOutCnt:retBackCnt;
+  obj[id]=Math.max(0,r2f((obj[id]||0)+d));
+  renderInPlace();
+};
+window.retSetCnt=function(id,which,v){
+  var obj=which==='out'?retOutCnt:retBackCnt;
+  obj[id]=Math.max(0,+v||0);
+  renderInPlace();
+};
+window.agentReturnSaveAll=async function(){
+  var client=$('#retClient')?$('#retClient').value:agentExClient;
+  var entries=agentStockCache.filter(function(p){ return (retOutCnt[p.productId]||0)>0 || (retBackCnt[p.productId]||0)>0; });
+  if(!entries.length) return toast('Укажите количество хотя бы по одному товару');
   await guardedSubmit(async function(){
     try{
-      await api('/ops','POST',{type:'exchange',productId:agentExProduct,qtyOut:agentExQtyOut,qtyBack:agentExQtyBack,client:agentExClient});
+      for(var i=0;i<entries.length;i++){
+        var p=entries[i];
+        await api('/ops','POST',{type:'exchange',productId:p.productId,qtyOut:retOutCnt[p.productId]||0,qtyBack:retBackCnt[p.productId]||0,client:client});
+      }
       toast('✅ Возврат оформлен');
-      agentExProduct=null; agentExQtyOut=1; agentExQtyBack=1; agentExClient=''; agentSubScreen=null;
+      retOutCnt={}; retBackCnt={}; agentExClient=''; agentSubScreen=null;
       await reload(); render();
     }catch(e){ toast(e.message); }
   });
