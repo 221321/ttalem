@@ -1287,7 +1287,7 @@ async function scrAgent(){
   // --- блок: новая продажа (быстрая, 1 товар) ---
   var newSaleBody=modeSwitch;
   if(!dishes.length && agentMode!=='exchange'){
-    newSaleBody+='<p class="sub">На борту пусто — получите загрузочный лист у менеджера, прежде чем продавать.</p>';
+    newSaleBody+='<p class="sub">На борту пусто — сначала отметьте выше, что взяли с собой.</p>';
   } else if(agentMode==='quick'){
   if(!agentSel){
     var res=agentQ?filterList(dishes,agentQ).slice(0,20):dishes.slice(0,20);
