@@ -717,7 +717,58 @@ function reportSales(from, to) {
     debt: r2(debts.reduce((a, r) => a + r.debt, 0))
   };
 
-  return { rows, debts, byAgent: Object.values(byAgent), totals };
+  // по контрагентам: сколько купил, сколько должен, сколько было возвратов (обмен по сроку годности на точке)
+  const byClient = {};
+  rows.forEach(r => {
+    const key = r.clientId || ('name:' + (r.client || '(без клиента)'));
+    if (!byClient[key]) byClient[key] = { client: r.client || '(без клиента)', clientId: r.clientId || null, revenue: 0, debt: 0, count: 0, returnsQty: 0, returnsCount: 0 };
+    byClient[key].revenue = r2(byClient[key].revenue + (r.sum || 0));
+    byClient[key].count++;
+    if (!r.paid) byClient[key].debt = r2(byClient[key].debt + r.debt);
+  });
+  // обмен по сроку годности не привязан к clientId (точка задаётся текстом на месте) — матчим по имени
+  let exOps = db.operations.filter(o => o.type === 'exchange');
+  if (from) exOps = exOps.filter(o => o.ts.slice(0, 10) >= from);
+  if (to) exOps = exOps.filter(o => o.ts.slice(0, 10) <= to);
+  exOps.forEach(o => {
+    if (!(o.qtyBack > 0)) return;
+    const name = (o.client || '').trim() || '(без клиента)';
+    let rec = Object.values(byClient).find(x => (x.client || '').trim().toLowerCase() === name.toLowerCase());
+    if (!rec) { rec = { client: name, clientId: null, revenue: 0, debt: 0, count: 0, returnsQty: 0, returnsCount: 0 }; byClient['name:' + name] = rec; }
+    rec.returnsQty = r2(rec.returnsQty + o.qtyBack);
+    rec.returnsCount++;
+  });
+
+  // по товару: сколько раз и сколько единиц взяли — из sale (1 позиция) и из позиций накладной
+  const byProduct = {};
+  ops.forEach(o => {
+    if (o.type === 'sale') {
+      const k = o.productId;
+      if (!byProduct[k]) byProduct[k] = { productId: k, qty: 0, sum: 0, count: 0 };
+      byProduct[k].qty = r2(byProduct[k].qty + (o.qty || 0));
+      byProduct[k].sum = r2(byProduct[k].sum + (o.sum || 0));
+      byProduct[k].count++;
+    } else if (o.type === 'waybill') {
+      (o.items || []).forEach(it => {
+        const k = it.productId;
+        if (!byProduct[k]) byProduct[k] = { productId: k, qty: 0, sum: 0, count: 0 };
+        byProduct[k].qty = r2(byProduct[k].qty + (it.qty || 0));
+        byProduct[k].sum = r2(byProduct[k].sum + (it.sum || 0));
+        byProduct[k].count++;
+      });
+    }
+  });
+  const byProductRows = Object.values(byProduct).map(x => {
+    const p = product(x.productId);
+    return { productId: x.productId, name: p ? p.name : '?', unit: p ? p.unit : '', qty: x.qty, sum: x.sum, count: x.count };
+  }).sort((a, b) => b.qty - a.qty);
+
+  return {
+    rows, debts, byAgent: Object.values(byAgent),
+    byClient: Object.values(byClient).sort((a, b) => b.revenue - a.revenue),
+    byProduct: byProductRows,
+    totals
+  };
 }
 // ---------- отчёт по потерям: усушка при обработке, списания, недостачи по инвентаризации ----------
 function reportLosses(from, to) {
