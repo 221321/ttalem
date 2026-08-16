@@ -1199,24 +1199,11 @@ window.agentClientSearch=function(v){
   var el=$('#agClientList'); if(!el) return;
   var lo=v.toLowerCase();
   var res=(v?agentClientsCache.filter(function(c){ return c.name.toLowerCase().includes(lo); }):agentClientsCache.slice().sort(function(a,b){ return a.name.localeCompare(b.name,'ru'); })).slice(0,15);
-  var exact=agentClientsCache.some(function(c){ return c.name.toLowerCase()===lo.trim(); });
-  if(!res.length&&!v){ el.innerHTML='<div class="srlist"><div class="sritem sub">Клиентов пока нет — начните печатать, чтобы добавить.</div></div>'; return; }
-  var html='<div class="srlist">'+res.map(function(c){ return '<div class="sritem" onclick="agentClientPick(\''+c.id+'\')">'+esc(c.name)+(c.code1c?' <span class="sub">· сверен с 1С</span>':'')+'</div>'; }).join('');
-  if(!exact&&v.trim()) html+='<div class="sritem" style="color:var(--gold)" onclick="agentClientAdd()">➕ Добавить «'+esc(v.trim())+'»</div>';
-  html+='</div>';
-  el.innerHTML=html;
+  // экспедитор клиентов не заводит — только выбирает из уже существующих (заводит менеджер/директор или 1С)
+  if(!res.length){ el.innerHTML='<div class="srlist"><div class="sritem sub">'+(v?'Ничего не найдено — попросите менеджера завести клиента.':'Клиентов пока нет — попросите менеджера завести клиента.')+'</div></div>'; return; }
+  el.innerHTML='<div class="srlist">'+res.map(function(c){ return '<div class="sritem" onclick="agentClientPick(\''+c.id+'\')">'+esc(c.name)+(c.code1c?' <span class="sub">· сверен с 1С</span>':'')+'</div>'; }).join('')+'</div>';
 };
 window.agentClientPick=function(id){ agentClientId=id; agentClientQ=''; renderInPlace(); };
-window.agentClientAdd=async function(){
-  var name=agentClientQ.trim();
-  if(!name) return;
-  try{
-    var c=await api('/clients','POST',{name:name});
-    agentClientsCache.push(c);
-    agentClientId=c.id; agentClientQ='';
-    renderInPlace();
-  }catch(e){ toast(e.message); }
-};
 async function scrAgent(){
   var mySales=(await api('/ops')).filter(function(o){ return o.type==='sale'||o.type==='waybill'; });
   var todaysSales=mySales.filter(function(o){ return o.ts.slice(0,10)===today(); });
