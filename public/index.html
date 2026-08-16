@@ -137,9 +137,10 @@ var clPasteOpen = false, clPasteText = '';
 var salesPasteOpen = false, salesPasteText = '';
 var payPasteOpen = false, payPasteText = '';
 var specsPasteOpen = false, specsPasteText = '';
-var agentQ = '', agentSel = null, agentQty = 1, agentPrice = 0;
+var agentQ = ''; // общий поиск товара для отдельных экранов "Заявка"/"Возврат"
+var agentSubScreen = null; // null = список карточек, 'doc' = создать заявку, 'return' = создать возврат
 var agentClientId = null, agentClientQ = '', agentClientsCache = [];
-var agentMode = 'quick', agentCart = [], agentCartQ = '';
+var agentCart = [], agentCartQ = '';
 var agentCartSel = null, agentCartQty = '1', agentCartPrice = '';
 var agentCash = 0, agentQr = 0, agentFrom = null, agentTo = null;
 var agentStockCache = []; // остаток экспедитора на борту — то, что взял сам
@@ -1246,6 +1247,72 @@ window.agentClientSearch=function(v){
   el.innerHTML='<div class="srlist">'+res.map(function(c){ return '<div class="sritem" onclick="agentClientPick(\''+c.id+'\')">'+esc(c.name)+(c.code1c?' <span class="sub">· сверен с 1С</span>':'')+'</div>'; }).join('')+'</div>';
 };
 window.agentClientPick=function(id){ agentClientId=id; agentClientQ=''; renderInPlace(); };
+// --- "Создать заявку" и "Создать возврат" — отдельные экраны с "← Назад", открываются с
+// главной страницы "Продажи" через кнопки "+" наверху, а не аккордеоном. Заявка объединяет
+// то, что раньше было "Быстрая продажа" и "Накладная" — всегда таблица строк, даже если
+// строка одна, всегда через уже существующий бэкенд накладной (он и так поддерживает 1+ позиций).
+function agentDocScreen(){
+  var body='<button class="btn sec sm" style="margin-bottom:10px" onclick="agentBackToOverview()">← Назад</button>'
+    +agentClientBlock();
+  if(agentClientId){
+    var cc=agentClientsCache.find(function(x){ return x.id===agentClientId; });
+    body+='<label>Адрес доставки</label><input id="agAddress" type="text" value="'+esc((cc&&cc.address)||'')+'" placeholder="Город, улица, дом" onblur="agentSaveAddress()">';
+  }
+  body+='<div class="hl" style="margin-top:14px">Позиции</div>';
+  if(agentCart.length){
+    body+=agentCart.map(function(l,i){
+      return '<div class="li"><span class="nm">'+esc(l.name)+' × '+fmt(l.qty)+' '+l.unit+'<div class="sub">'+money(l.price)+'/'+l.unit+' = '+money(l.qty*l.price)+'</div></span><span class="vl"><button class="btn sec sm" onclick="agentCartRemove('+i+')">✕</button></span></div>';
+    }).join('');
+  } else {
+    body+='<p class="sub">Пока пусто — добавьте товары ниже.</p>';
+  }
+  if(!agentStockCache.length){
+    body+='<p class="sub" style="margin-top:10px">Остаток пуст — сначала оформите приём товара на главном экране.</p>';
+  } else if(agentCartSel){
+    var cartSelP=agentStockCache.find(function(x){ return x.productId===agentCartSel; });
+    body+='<span class="pill ok">'+esc(cartSelP?cartSelP.name:'')+'</span>'
+      +'<label>Количество, '+(cartSelP?cartSelP.unit:'')+' (в остатке '+(cartSelP?fmt(cartSelP.qty):0)+')</label>'
+      +'<input class="big" id="agCartQtyInput" type="number" step="0.01" inputmode="decimal" value="'+agentCartQty+'" oninput="agentCartQty=this.value">'
+      +'<label>Цена за единицу, ₸</label><input class="big" id="agCartPriceInput" type="number" step="1" inputmode="decimal" value="'+agentCartPrice+'" oninput="agentCartPrice=this.value">'
+      +'<div style="height:10px"></div><button class="btn" onclick="agentCartAddToCart()">Добавить позицию</button>'
+      +'<button class="btn sec sm" style="margin-top:8px" onclick="agentCartSel=null;renderInPlace()">← Выбрать другой товар</button>';
+  } else {
+    body+='<div class="search" style="margin-top:8px"><input id="agCartSearch" placeholder="Найти товар..." value="'+esc(agentCartQ)+'" oninput="agentCartSearch(this.value)" autocomplete="off"></div><div id="agCartList"></div>';
+  }
+  var cartTotal=agentCart.reduce(function(a,l){ return a+l.qty*l.price; },0);
+  body+='<div class="li" style="margin-top:10px"><span class="nm"><b>Итого</b></span><span class="vl"><b>'+money(cartTotal)+'</b></span></div>'
+    +'<div class="row" style="margin-top:8px">'
+    +'<div><label>Наличные, ₸</label><input class="big" id="agCash" type="number" step="1" inputmode="decimal" value="'+(agentCash||'')+'" oninput="agentCartCalc()"></div>'
+    +'<div><label>QR / карта, ₸</label><input class="big" id="agQr" type="number" step="1" inputmode="decimal" value="'+(agentQr||'')+'" oninput="agentCartCalc()"></div>'
+    +'</div>'
+    +'<div id="agCartDebt" class="sub" style="margin-top:8px"></div>'
+    +'<div style="height:10px"></div><button class="btn" onclick="agentWaybillSave()" '+(agentCart.length?'':'disabled')+'>Оформить заявку</button>';
+  return '<h2>🆕 Новая заявка</h2><div class="card">'+body+'</div>';
+}
+
+function agentReturnScreen(){
+  var dishes=agentStockCache;
+  var body='<button class="btn sec sm" style="margin-bottom:10px" onclick="agentBackToOverview()">← Назад</button>';
+  if(!agentExProduct){
+    var exRes=agentQ?filterList(dishes,agentQ).slice(0,20):dishes.slice(0,20);
+    body+='<div class="search"><input id="agSearch" placeholder="Найти товар..." value="'+esc(agentQ)+'" oninput="agentSearch(this.value)" autocomplete="off"><span class="clr" onclick="agentClear()" style="display:'+(agentQ?'block':'none')+'">✕</span></div>'
+      +'<div class="srlist">'+(exRes.map(function(p){ return '<div class="sritem" onclick="agentExPick(\''+p.productId+'\')">'+CAT(p.type).icon+' '+esc(p.name)+' <span class="sub">'+fmt(p.qty)+' '+p.unit+' в остатке</span></div>'; }).join('')||'<div class="sritem sub">'+(dishes.length?'Ничего не найдено':'Остаток пуст — сначала оформите приём товара на главном экране.')+'</div>')+'</div>';
+  } else {
+    var exP=P(agentExProduct);
+    body+='<span class="pill ok">'+esc(exP.name)+'</span>'
+      +'<label>Отдано свежего, '+exP.unit+'</label><input class="big" id="exOut" type="number" step="0.01" inputmode="decimal" value="'+agentExQtyOut+'" oninput="agentExCalc()">'
+      +'<label>Забрано просроченного, '+exP.unit+'</label><input class="big" id="exBack" type="number" step="0.01" inputmode="decimal" value="'+agentExQtyBack+'" oninput="agentExCalc()">'
+      +'<label>Точка / клиент (необязательно)</label><input id="exClient" type="text" value="'+esc(agentExClient)+'" placeholder="Название точки" oninput="agentExCalc()">'
+      +'<p class="sub" style="margin-top:8px">Возврат — не продажа, 0 ₸. Просроченное спишется одним актом при сдаче смены.</p>'
+      +'<div style="height:10px"></div><button class="btn" onclick="agentExSave()">Оформить возврат</button>'
+      +'<button class="btn sec sm" style="margin-top:8px" onclick="agentExProduct=null;renderInPlace()">← Выбрать другой товар</button>';
+  }
+  return '<h2>🔄 Новый возврат</h2><div class="card">'+body+'</div>';
+}
+window.agentOpenDoc=function(){ agentSubScreen='doc'; agentCart=[]; agentCartSel=null; agentClientId=null; agentClientQ=''; agentCash=0; agentQr=0; renderInPlace(); };
+window.agentOpenReturn=function(){ agentSubScreen='return'; agentExProduct=null; agentExQtyOut=1; agentExQtyBack=1; agentExClient=''; agentQ=''; renderInPlace(); };
+window.agentBackToOverview=function(){ agentSubScreen=null; renderInPlace(); };
+
 async function scrAgent(){
   var mySales=(await api('/ops')).filter(function(o){ return o.type==='sale'||o.type==='waybill'; });
   var todaysSales=mySales.filter(function(o){ return o.ts.slice(0,10)===today(); });
@@ -1255,7 +1322,6 @@ async function scrAgent(){
   // товары для продажи/накладной/обмена — то, что реально выдано на борт загрузочным листом,
   // а не весь ассортимент компании (раньше список брался из D.products целиком)
   agentStockCache=await api('/agent/mystock');
-  var dishes=agentStockCache;
   var brak=await api('/agent/brak').catch(function(){ return {count:0,rows:[]}; });
   agentClientsCache=await api('/clients');
   var cash=await api('/cash/status');
@@ -1306,87 +1372,12 @@ async function scrAgent(){
   var brakCard=card('agbrak','<b>🔄 Возвраты по сроку годности</b>'+(brak.count?' <span class="pill warn">'+brak.count+'</span>':''),brakBody);
 
   var modeSwitch='<div class="row" style="margin-bottom:8px;flex-wrap:wrap;gap:6px">'
-    +'<button class="btn '+(agentMode==='quick'?'':'sec')+' sm" onclick="agentMode=\'quick\';renderInPlace()">⚡ Быстрая продажа</button>'
-    +'<button class="btn '+(agentMode==='waybill'?'':'sec')+' sm" onclick="agentMode=\'waybill\';renderInPlace()">📦 Накладная (неск. позиций)</button>'
-    +'<button class="btn '+(agentMode==='exchange'?'':'sec')+' sm" onclick="agentMode=\'exchange\';agentExProduct=null;renderInPlace()">🔄 Обмен по сроку годности</button>'
+    +'<button class="btn" onclick="agentOpenDoc()">➕ Создать заявку</button>'
+    +'<button class="btn sec" onclick="agentOpenReturn()">➕ Создать возврат</button>'
     +'</div>';
 
-  // --- блок: новая продажа (быстрая, 1 товар) ---
-  var newSaleBody=modeSwitch;
-  if(!dishes.length && agentMode!=='exchange'){
-    newSaleBody+='<p class="sub">Остаток пуст — сначала оформите приём товара выше.</p>';
-  } else if(agentMode==='quick'){
-  if(!agentSel){
-    var res=agentQ?filterList(dishes,agentQ).slice(0,20):dishes.slice(0,20);
-    newSaleBody+='<div class="search"><input id="agSearch" placeholder="Найти товар..." value="'+esc(agentQ)+'" oninput="agentSearch(this.value)" autocomplete="off"><span class="clr" onclick="agentClear()" style="display:'+(agentQ?'block':'none')+'">✕</span></div>'
-      +'<div class="srlist">'+(res.map(function(p){ return '<div class="sritem" onclick="agentPick(\''+p.productId+'\')">'+CAT(p.type).icon+' '+esc(p.name)+' <span class="sub">'+fmt(p.qty)+' '+p.unit+' · '+(p.salePrice||0)+' ₸</span></div>'; }).join('')||'<div class="sritem sub">Ничего не найдено</div>')+'</div>';
-  } else {
-    var p=P(agentSel);
-    newSaleBody+='<span class="pill ok">'+esc(p.name)+'</span>'
-      +'<label>Количество, '+p.unit+'</label><input class="big" id="agQty" type="number" step="0.01" inputmode="decimal" value="'+agentQty+'" oninput="agentCalc()">'
-      +'<label>Цена за единицу, ₸</label><input class="big" id="agPrice" type="number" step="1" inputmode="decimal" value="'+(agentPrice||p.salePrice||0)+'" oninput="agentCalc()">'
-      +'<div id="agTotal" class="sub" style="text-align:center;margin:10px 0;font-size:16px;font-weight:600"></div>'
-      +agentClientBlock()
-      +'<div class="row" style="margin-top:8px">'
-      +'<div><label>Наличные, ₸</label><input class="big" id="agCash" type="number" step="1" inputmode="decimal" value="'+(agentCash||'')+'" oninput="agentCalc()"></div>'
-      +'<div><label>QR / карта, ₸</label><input class="big" id="agQr" type="number" step="1" inputmode="decimal" value="'+(agentQr||'')+'" oninput="agentCalc()"></div>'
-      +'</div>'
-      +'<div id="agDebt" class="sub" style="margin-top:8px"></div>'
-      +'<div style="height:10px"></div><button class="btn" id="agGo" onclick="agentSave()">Оформить продажу</button>'
-      +'<button class="btn sec sm" style="margin-top:8px" onclick="agentSel=null;renderInPlace()">← Выбрать другой товар</button>';
-  }
-  } else if(agentMode==='waybill'){
-    // --- режим накладной: клиент+адрес, несколько строк товаров, общий итог ---
-    newSaleBody+=agentClientBlock();
-    if(agentClientId){
-      var cc=agentClientsCache.find(function(x){ return x.id===agentClientId; });
-      newSaleBody+='<label>Адрес доставки</label><input id="agAddress" type="text" value="'+esc((cc&&cc.address)||'')+'" placeholder="Город, улица, дом" onblur="agentSaveAddress()">';
-    }
-    newSaleBody+='<div class="hl" style="margin-top:14px">Позиции</div>';
-    if(agentCart.length){
-      newSaleBody+=agentCart.map(function(l,i){
-        return '<div class="li"><span class="nm">'+esc(l.name)+' × '+fmt(l.qty)+' '+l.unit+'<div class="sub">'+money(l.price)+'/'+l.unit+' = '+money(l.qty*l.price)+'</div></span><span class="vl"><button class="btn sec sm" onclick="agentCartRemove('+i+')">✕</button></span></div>';
-      }).join('');
-    } else {
-      newSaleBody+='<p class="sub">Пока пусто — добавьте товары ниже.</p>';
-    }
-    if(agentCartSel){
-      var cartSelP=agentStockCache.find(function(x){ return x.productId===agentCartSel; });
-      newSaleBody+='<span class="pill ok">'+esc(cartSelP?cartSelP.name:'')+'</span>'
-        +'<label>Количество, '+(cartSelP?cartSelP.unit:'')+' (в остатке '+(cartSelP?fmt(cartSelP.qty):0)+')</label>'
-        +'<input class="big" id="agCartQtyInput" type="number" step="0.01" inputmode="decimal" value="'+agentCartQty+'" oninput="agentCartQty=this.value">'
-        +'<label>Цена за единицу, ₸</label><input class="big" id="agCartPriceInput" type="number" step="1" inputmode="decimal" value="'+agentCartPrice+'" oninput="agentCartPrice=this.value">'
-        +'<div style="height:10px"></div><button class="btn" onclick="agentCartAddToCart()">Добавить в накладную</button>'
-        +'<button class="btn sec sm" style="margin-top:8px" onclick="agentCartSel=null;renderInPlace()">← Выбрать другой товар</button>';
-    } else {
-      newSaleBody+='<div class="search" style="margin-top:8px"><input id="agCartSearch" placeholder="Найти товар..." value="'+esc(agentCartQ)+'" oninput="agentCartSearch(this.value)" autocomplete="off"></div><div id="agCartList"></div>';
-    }
-    var cartTotal=agentCart.reduce(function(a,l){ return a+l.qty*l.price; },0);
-    newSaleBody+='<div class="li" style="margin-top:10px"><span class="nm"><b>Итого</b></span><span class="vl"><b>'+money(cartTotal)+'</b></span></div>'
-      +'<div class="row" style="margin-top:8px">'
-      +'<div><label>Наличные, ₸</label><input class="big" id="agCash" type="number" step="1" inputmode="decimal" value="'+(agentCash||'')+'" oninput="agentCartCalc()"></div>'
-      +'<div><label>QR / карта, ₸</label><input class="big" id="agQr" type="number" step="1" inputmode="decimal" value="'+(agentQr||'')+'" oninput="agentCartCalc()"></div>'
-      +'</div>'
-      +'<div id="agCartDebt" class="sub" style="margin-top:8px"></div>'
-      +'<div style="height:10px"></div><button class="btn" onclick="agentWaybillSave()" '+(agentCart.length?'':'disabled')+'>Оформить накладную</button>';
-  } else if(agentMode==='exchange'){
-    // --- обмен по сроку годности: свежее с борта (0 ₸), просроченное копится и спишется вечером ---
-    if(!agentExProduct){
-      var exRes=agentQ?filterList(dishes,agentQ).slice(0,20):dishes.slice(0,20);
-      newSaleBody+='<div class="search"><input id="agSearch" placeholder="Найти товар..." value="'+esc(agentQ)+'" oninput="agentSearch(this.value)" autocomplete="off"><span class="clr" onclick="agentClear()" style="display:'+(agentQ?'block':'none')+'">✕</span></div>'
-        +'<div class="srlist">'+(exRes.map(function(p){ return '<div class="sritem" onclick="agentExPick(\''+p.productId+'\')">'+CAT(p.type).icon+' '+esc(p.name)+' <span class="sub">'+fmt(p.qty)+' '+p.unit+' в остатке</span></div>'; }).join('')||'<div class="sritem sub">Ничего не найдено</div>')+'</div>';
-    } else {
-      var exP=P(agentExProduct);
-      newSaleBody+='<span class="pill ok">'+esc(exP.name)+'</span>'
-        +'<label>Отдано свежего, '+exP.unit+'</label><input class="big" id="exOut" type="number" step="0.01" inputmode="decimal" value="'+agentExQtyOut+'" oninput="agentExCalc()">'
-        +'<label>Забрано просроченного, '+exP.unit+'</label><input class="big" id="exBack" type="number" step="0.01" inputmode="decimal" value="'+agentExQtyBack+'" oninput="agentExCalc()">'
-        +'<label>Точка / клиент (необязательно)</label><input id="exClient" type="text" value="'+esc(agentExClient)+'" placeholder="Название точки" oninput="agentExCalc()">'
-        +'<p class="sub" style="margin-top:8px">Обмен — не продажа, 0 ₸. Просроченное спишется одним актом при сдаче смены.</p>'
-        +'<div style="height:10px"></div><button class="btn" onclick="agentExSave()">Зафиксировать обмен</button>'
-        +'<button class="btn sec sm" style="margin-top:8px" onclick="agentExProduct=null;renderInPlace()">← Выбрать другой товар</button>';
-    }
-  }
-  var newSaleCard=card('agnew','<b>🆕 Новая продажа</b>',newSaleBody);
+  if(agentSubScreen==='doc') return agentDocScreen();
+  if(agentSubScreen==='return') return agentReturnScreen();
   // --- блок: мои продажи сегодня ---
   var todayList=todaysSales.length ? todaysSales.slice().reverse().map(function(s){
     var debtVal=(s.sum!=null&&s.paidAmount!=null)?r2f(s.sum-s.paidAmount):0;
@@ -1439,35 +1430,12 @@ async function scrAgent(){
     +'<div class="li"><span class="nm">Долг за период</span><span class="vl" style="color:'+(rep.totals.debt>0?'var(--red)':'inherit')+'">'+money(rep.totals.debt)+'</span></div>';
   var analyticsCard=card('aganalytics','<b>📊 Аналитика</b>',analyticsBody);
 
-  return loadCard+newSaleCard+stockCard+brakCard+todayCard+debtsCard+cashCard+analyticsCard;
+  return modeSwitch+loadCard+stockCard+brakCard+todayCard+debtsCard+cashCard+analyticsCard;
 }
 function r2f(x){ return Math.round((+x||0)*100)/100; }
 function agentOpTitle(s){ return s.type==='waybill' ? 'Накладная ('+s.items.length+' поз.)' : P(s.productId).name; }
 window.agentSearch=function(v){ agentQ=v; renderInPlace(); };
 window.agentClear=function(){ agentQ=''; renderInPlace(); };
-window.agentPick=function(id){ agentSel=id; agentQty=1; var p=P(id); agentPrice=p.salePrice||0; agentClientId=null; agentClientQ=''; agentCash=0; agentQr=0; exp.agnew=true; render(); };
-window.agentCalc=function(){
-  agentQty=+($('#agQty')?$('#agQty').value:1)||0;
-  agentPrice=+($('#agPrice')?$('#agPrice').value:0)||0;
-  agentCash=+($('#agCash')?$('#agCash').value:0)||0;
-  agentQr=+($('#agQr')?$('#agQr').value:0)||0;
-  var total=r2f(agentQty*agentPrice);
-  var paid=r2f(agentCash+agentQr);
-  var debt=Math.max(0,r2f(total-paid));
-  if($('#agTotal')) $('#agTotal').textContent='Итого: '+money(total);
-  if($('#agDebt')) $('#agDebt').innerHTML=debt>0.001?'<span class="pill bad">долг останется: '+money(debt)+'</span>':'<span class="pill ok">оплачено полностью</span>';
-};
-window.agentSave=async function(){
-  if(!(agentQty>0)) return toast('Введите количество');
-  await guardedSubmit(async function(){
-    try{
-      await api('/ops','POST',{type:'sale',productId:agentSel,qty:agentQty,price:agentPrice,clientId:agentClientId,paymentCash:agentCash,paymentQr:agentQr});
-      toast('✅ Продажа оформлена');
-      agentSel=null; agentQty=1; agentPrice=0; agentClientId=null; agentClientQ=''; agentCash=0; agentQr=0;
-      await reload(); render();
-    }catch(e){ toast(e.message); }
-  });
-};
 window.agentSaveAddress=async function(){
   if(!agentClientId) return;
   var addr=$('#agAddress')?$('#agAddress').value:'';
@@ -1519,8 +1487,8 @@ window.agentWaybillSave=async function(){
   await guardedSubmit(async function(){
     try{
       await api('/ops','POST',{type:'waybill',clientId:agentClientId,address:address,items:agentCart.map(function(l){ return {productId:l.productId,qty:l.qty,price:l.price}; }),paymentCash:agentCash,paymentQr:agentQr});
-      toast('✅ Накладная оформлена');
-      agentCart=[]; agentClientId=null; agentClientQ=''; agentCash=0; agentQr=0;
+      toast('✅ Заявка оформлена');
+      agentCart=[]; agentClientId=null; agentClientQ=''; agentCash=0; agentQr=0; agentSubScreen=null;
       await reload(); render();
     }catch(e){ toast(e.message); }
   });
@@ -1549,8 +1517,8 @@ window.agentExSave=async function(){
   await guardedSubmit(async function(){
     try{
       await api('/ops','POST',{type:'exchange',productId:agentExProduct,qtyOut:agentExQtyOut,qtyBack:agentExQtyBack,client:agentExClient});
-      toast('✅ Обмен зафиксирован');
-      agentExProduct=null; agentExQtyOut=1; agentExQtyBack=1; agentExClient='';
+      toast('✅ Возврат оформлен');
+      agentExProduct=null; agentExQtyOut=1; agentExQtyBack=1; agentExClient=''; agentSubScreen=null;
       await reload(); render();
     }catch(e){ toast(e.message); }
   });
