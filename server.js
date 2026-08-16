@@ -679,23 +679,26 @@ function reportSales(from, to) {
 
   const rows = ops.slice().sort((a, b) => a.ts < b.ts ? 1 : -1).map(o => {
     const seller = db.users.find(u => u.id === o.userId);
-    let name, unit, qty;
+    let name, unit, qty, lines;
     if (o.type === 'waybill') {
       name = 'Накладная (' + (o.items ? o.items.length : 0) + ' поз.)';
       unit = '';
       qty = o.items ? r2(o.items.reduce((a, it) => a + (+it.qty || 0), 0)) : 0;
+      // построчный состав накладной — нужен, чтобы фильтровать/группировать продажи по конкретному товару
+      lines = (o.items || []).map(it => { const ip = product(it.productId); return { productId: it.productId, name: ip ? ip.name : '?', unit: ip ? ip.unit : '', qty: it.qty, sum: it.sum }; });
     } else {
       const p = product(o.productId);
       name = p ? p.name : '?';
       unit = p ? p.unit : '';
       qty = o.qty;
+      lines = [{ productId: o.productId, name, unit, qty: o.qty, sum: o.sum }];
     }
     return {
       id: o.id, ts: o.ts, name, unit,
       qty, price: o.price, sum: o.sum, costSum: o.costSum, profit: o.profit,
       client: o.client, clientId: o.clientId || null, paid: o.paid, paidAmount: o.paidAmount, debt: r2((o.sum || 0) - (o.paidAmount || 0)),
       paymentCash: o.paymentCash || 0, paymentQr: o.paymentQr || 0,
-      sellerId: o.userId, sellerName: seller ? seller.name : '?', source: o.source || 'сайт'
+      sellerId: o.userId, sellerName: seller ? seller.name : '?', source: o.source || 'сайт', lines
     };
   });
 
