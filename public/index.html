@@ -140,8 +140,7 @@ var specsPasteOpen = false, specsPasteText = '';
 var agentQ = ''; // общий поиск товара для отдельных экранов "Заявка"/"Возврат"
 var agentSubScreen = null; // null = список карточек, 'doc' = создать заявку, 'return' = создать возврат
 var agentClientId = null, agentClientQ = '', agentClientsCache = [];
-var agentCart = [], agentCartQ = '';
-var agentCartSel = null, agentCartQty = '1', agentCartPrice = '';
+var docCnt = {}, docPrice = {}; // заявка: {productId: qty}/{productId: price} — тот же принцип, что loadCnt на "Приём товара"
 var agentCash = 0, agentQr = 0, agentFrom = null, agentTo = null;
 var agentStockCache = []; // остаток экспедитора на борту — то, что взял сам
 var agentExProduct = null, agentExQtyOut = 1, agentExQtyBack = 1, agentExClient = ''; // обмен по сроку годности
@@ -1254,39 +1253,42 @@ window.agentClientPick=function(id){ agentClientId=id; agentClientQ=''; renderIn
 function agentDocScreen(){
   var body='<button class="btn sec sm" style="margin-bottom:10px" onclick="agentBackToOverview()">← Назад</button>'
     +agentClientBlock();
-  if(agentClientId){
-    var cc=agentClientsCache.find(function(x){ return x.id===agentClientId; });
-    body+='<label>Адрес доставки</label><input id="agAddress" type="text" value="'+esc((cc&&cc.address)||'')+'" placeholder="Город, улица, дом" onblur="agentSaveAddress()">';
-  }
   body+='<div class="hl" style="margin-top:14px">Позиции</div>';
-  if(agentCart.length){
-    body+=agentCart.map(function(l,i){
-      return '<div class="li"><span class="nm">'+esc(l.name)+' × '+fmt(l.qty)+' '+l.unit+'<div class="sub">'+money(l.price)+'/'+l.unit+' = '+money(l.qty*l.price)+'</div></span><span class="vl"><button class="btn sec sm" onclick="agentCartRemove('+i+')">✕</button></span></div>';
-    }).join('');
-  } else {
-    body+='<p class="sub">Пока пусто — добавьте товары ниже.</p>';
-  }
   if(!agentStockCache.length){
-    body+='<p class="sub" style="margin-top:10px">Остаток пуст — сначала оформите приём товара на главном экране.</p>';
-  } else if(agentCartSel){
-    var cartSelP=agentStockCache.find(function(x){ return x.productId===agentCartSel; });
-    body+='<span class="pill ok">'+esc(cartSelP?cartSelP.name:'')+'</span>'
-      +'<label>Количество, '+(cartSelP?cartSelP.unit:'')+' (в остатке '+(cartSelP?fmt(cartSelP.qty):0)+')</label>'
-      +'<input class="big" id="agCartQtyInput" type="number" step="0.01" inputmode="decimal" value="'+agentCartQty+'" oninput="agentCartQty=this.value">'
-      +'<label>Цена за единицу, ₸</label><input class="big" id="agCartPriceInput" type="number" step="1" inputmode="decimal" value="'+agentCartPrice+'" oninput="agentCartPrice=this.value">'
-      +'<div style="height:10px"></div><button class="btn" onclick="agentCartAddToCart()">Добавить позицию</button>'
-      +'<button class="btn sec sm" style="margin-top:8px" onclick="agentCartSel=null;renderInPlace()">← Выбрать другой товар</button>';
+    body+='<p class="sub">Остаток пуст — сначала оформите приём товара на главном экране.</p>';
   } else {
-    body+='<div class="search" style="margin-top:8px"><input id="agCartSearch" placeholder="Найти товар..." value="'+esc(agentCartQ)+'" oninput="agentCartSearch(this.value)" autocomplete="off"></div><div id="agCartList"></div>';
+    // тот же принцип, что на "Приём товара": весь список сразу, степпер +/- в строке, без
+    // отдельного экрана "выбрал → подтвердил → добавил". Цена появляется только когда взяли ≥1 —
+    // не загромождает список, пока товар не нужен.
+    body+='<div class="search"><input id="docSearch" placeholder="Найти товар..." oninput="docSearch(this.value)" autocomplete="off"><span class="clr" id="docSearchClr" onclick="docClearSearch()">✕</span></div>'
+      +agentStockCache.map(function(p){
+        var cnt=docCnt[p.productId]||0;
+        var row='<div class="li doc-item" data-name="'+esc(p.name.toLowerCase())+'" style="align-items:flex-start">'
+          +'<span class="nm">'+esc(p.name)+'<div class="sub">в остатке: '+fmt(p.qty)+' '+p.unit+'</div></span>'
+          +'<span class="step">'
+          +'<button onclick="docStep(\''+p.productId+'\',-1)">−</button>'
+          +'<input type="number" inputmode="numeric" min="0" value="'+cnt+'" style="width:52px;text-align:center;border:1px solid var(--line);border-radius:8px;padding:9px 2px;font-size:19px;font-weight:600" onfocus="this.select()" onchange="docSetCnt(\''+p.productId+'\',this.value)">'
+          +'<button onclick="docStep(\''+p.productId+'\',1)">+</button>'
+          +'</span></div>';
+        if(cnt>0){
+          var price=docPrice[p.productId]!=null?docPrice[p.productId]:(p.salePrice||0);
+          row+='<div class="li" style="padding-top:0"><span class="nm sub">Цена за '+p.unit+'</span><span class="vl"><input type="number" step="1" inputmode="decimal" value="'+price+'" style="width:100px;text-align:right" onchange="docSetPrice(\''+p.productId+'\',this.value)"></span></div>';
+        }
+        return row;
+      }).join('');
   }
-  var cartTotal=agentCart.reduce(function(a,l){ return a+l.qty*l.price; },0);
+  var cartTotal=docTotal();
   body+='<div class="li" style="margin-top:10px"><span class="nm"><b>Итого</b></span><span class="vl"><b>'+money(cartTotal)+'</b></span></div>'
+    +'<div class="row" style="margin-top:8px">'
+    +'<button class="btn sec sm" onclick="docPaySet(\'cash\')">💵 Наличными</button>'
+    +'<button class="btn sec sm" onclick="docPaySet(\'qr\')">📱 QR</button>'
+    +'</div>'
     +'<div class="row" style="margin-top:8px">'
     +'<div><label>Наличные, ₸</label><input class="big" id="agCash" type="number" step="1" inputmode="decimal" value="'+(agentCash||'')+'" oninput="agentCartCalc()"></div>'
     +'<div><label>QR / карта, ₸</label><input class="big" id="agQr" type="number" step="1" inputmode="decimal" value="'+(agentQr||'')+'" oninput="agentCartCalc()"></div>'
     +'</div>'
     +'<div id="agCartDebt" class="sub" style="margin-top:8px"></div>'
-    +'<div style="height:10px"></div><button class="btn" onclick="agentWaybillSave()" '+(agentCart.length?'':'disabled')+'>Оформить заявку</button>';
+    +'<div style="height:10px"></div><button class="btn" onclick="agentWaybillSave()" '+(cartTotal>0?'':'disabled')+'>Оформить заявку</button>';
   return '<h2>🆕 Новая заявка</h2><div class="card">'+body+'</div>';
 }
 
@@ -1309,7 +1311,7 @@ function agentReturnScreen(){
   }
   return '<h2>🔄 Новый возврат</h2><div class="card">'+body+'</div>';
 }
-window.agentOpenDoc=function(){ agentSubScreen='doc'; agentCart=[]; agentCartSel=null; agentClientId=null; agentClientQ=''; agentCash=0; agentQr=0; renderInPlace(); };
+window.agentOpenDoc=function(){ agentSubScreen='doc'; docCnt={}; docPrice={}; agentClientId=null; agentClientQ=''; agentCash=0; agentQr=0; renderInPlace(); };
 window.agentOpenReturn=function(){ agentSubScreen='return'; agentExProduct=null; agentExQtyOut=1; agentExQtyBack=1; agentExClient=''; agentQ=''; renderInPlace(); };
 window.agentBackToOverview=function(){ agentSubScreen=null; renderInPlace(); };
 
@@ -1436,59 +1438,63 @@ function r2f(x){ return Math.round((+x||0)*100)/100; }
 function agentOpTitle(s){ return s.type==='waybill' ? 'Накладная ('+s.items.length+' поз.)' : P(s.productId).name; }
 window.agentSearch=function(v){ agentQ=v; renderInPlace(); };
 window.agentClear=function(){ agentQ=''; renderInPlace(); };
-window.agentSaveAddress=async function(){
-  if(!agentClientId) return;
-  var addr=$('#agAddress')?$('#agAddress').value:'';
-  try{
-    await api('/clients/'+agentClientId,'PUT',{address:addr});
-    var c=agentClientsCache.find(function(x){ return x.id===agentClientId; });
-    if(c) c.address=addr;
-  }catch(e){ toast(e.message); }
+function docTotal(){
+  return Object.keys(docCnt).reduce(function(a,pid){
+    var c=docCnt[pid]||0; if(!(c>0)) return a;
+    var p=agentStockCache.find(function(x){ return x.productId===pid; });
+    var price=docPrice[pid]!=null?docPrice[pid]:(p?p.salePrice||0:0);
+    return a+c*price;
+  },0);
+}
+window.docSearch=function(v){
+  filterDom(v,'doc-item');
+  var c=$('#docSearchClr');
+  if(c) c.style.display=v?'block':'none';
 };
-window.agentCartSearch=function(v){
-  agentCartQ=v;
-  var el=$('#agCartList'); if(!el) return;
-  if(!v){ el.innerHTML=''; return; }
-  var res=filterList(agentStockCache,v).slice(0,10); // только то, что реально в остатке
-  el.innerHTML='<div class="srlist">'+(res.map(function(p){ return '<div class="sritem" onclick="agentCartPick(\''+p.productId+'\')">'+CAT(p.type).icon+' '+esc(p.name)+' <span class="sub">'+fmt(p.qty)+' '+p.unit+' · '+(p.salePrice||0)+' ₸</span></div>'; }).join('')||'<div class="sritem sub">Ничего не найдено</div>')+'</div>';
+window.docClearSearch=function(){
+  var i=$('#docSearch');
+  if(i) i.value='';
+  docSearch('');
+  if(i) i.focus();
 };
-window.agentCartPick=function(id){
-  var p=P(id);
-  agentCartSel=id; agentCartQty='1'; agentCartPrice=String(p.salePrice||0); agentCartQ='';
+window.docStep=function(id,d){
+  var p=agentStockCache.find(function(x){ return x.productId===id; });
+  var max=p?p.qty:0;
+  docCnt[id]=Math.max(0,Math.min(max,r2f((docCnt[id]||0)+d)));
   renderInPlace();
 };
-window.agentCartAddToCart=function(){
-  var qtyEl=$('#agCartQtyInput'), priceEl=$('#agCartPriceInput');
-  var qty=+(qtyEl?qtyEl.value:agentCartQty)||0;
-  var price=+(priceEl?priceEl.value:agentCartPrice)||0;
-  if(!(qty>0)) return toast('Введите количество');
-  if(!(price>=0)) return toast('Введите цену');
-  var p=P(agentCartSel);
-  var onBoard=agentStockCache.find(function(x){ return x.productId===agentCartSel; });
-  var already=agentCart.find(function(l){ return l.productId===agentCartSel; });
-  var avail=onBoard?r2f(onBoard.qty-(already?already.qty:0)):0;
-  if(qty>avail+0.001){ toast('В остатке только '+fmt(avail)+' '+p.unit); return; }
-  if(already){ already.qty=r2f(already.qty+qty); already.price=price; }
-  else agentCart.push({productId:agentCartSel,name:p.name,unit:p.unit,qty:qty,price:price});
-  agentCartSel=null; agentCartQty='1'; agentCartPrice=''; renderInPlace();
+window.docSetCnt=function(id,v){
+  var p=agentStockCache.find(function(x){ return x.productId===id; });
+  var max=p?p.qty:0;
+  docCnt[id]=Math.max(0,Math.min(max,+v||0));
+  renderInPlace();
 };
-window.agentCartRemove=function(i){ agentCart.splice(i,1); renderInPlace(); };
+window.docSetPrice=function(id,v){ docPrice[id]=Math.max(0,+v||0); renderInPlace(); };
+window.docPaySet=function(method){
+  var total=docTotal();
+  if(method==='cash'){ agentCash=total; agentQr=0; } else { agentQr=total; agentCash=0; }
+  renderInPlace();
+};
 window.agentCartCalc=function(){
   agentCash=+($('#agCash')?$('#agCash').value:0)||0;
   agentQr=+($('#agQr')?$('#agQr').value:0)||0;
-  var total=agentCart.reduce(function(a,l){ return a+l.qty*l.price; },0);
+  var total=docTotal();
   var paid=r2f(agentCash+agentQr);
   var debt=Math.max(0,r2f(total-paid));
   if($('#agCartDebt')) $('#agCartDebt').innerHTML=debt>0.001?'<span class="pill bad">долг останется: '+money(debt)+'</span>':'<span class="pill ok">оплачено полностью</span>';
 };
 window.agentWaybillSave=async function(){
-  if(!agentCart.length) return toast('Добавьте хотя бы одну позицию');
-  var address=$('#agAddress')?$('#agAddress').value:'';
+  var items=Object.keys(docCnt).filter(function(pid){ return docCnt[pid]>0; }).map(function(pid){
+    var p=agentStockCache.find(function(x){ return x.productId===pid; });
+    var price=docPrice[pid]!=null?docPrice[pid]:(p?p.salePrice||0:0);
+    return {productId:pid,qty:docCnt[pid],price:price};
+  });
+  if(!items.length) return toast('Добавьте хотя бы одну позицию');
   await guardedSubmit(async function(){
     try{
-      await api('/ops','POST',{type:'waybill',clientId:agentClientId,address:address,items:agentCart.map(function(l){ return {productId:l.productId,qty:l.qty,price:l.price}; }),paymentCash:agentCash,paymentQr:agentQr});
+      await api('/ops','POST',{type:'waybill',clientId:agentClientId,items:items,paymentCash:agentCash,paymentQr:agentQr});
       toast('✅ Заявка оформлена');
-      agentCart=[]; agentClientId=null; agentClientQ=''; agentCash=0; agentQr=0; agentSubScreen=null;
+      docCnt={}; docPrice={}; agentClientId=null; agentClientQ=''; agentCash=0; agentQr=0; agentSubScreen=null;
       await reload(); render();
     }catch(e){ toast(e.message); }
   });
