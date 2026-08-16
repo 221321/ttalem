@@ -62,6 +62,14 @@ function departmentForType(type) {
 (function migrate() {
   let changed = false;
 
+  // ЗАЩИТА: db.seq раньше нигде не инициализировался явно — если он окажется не числом
+  // (новый деплой с пустой базой, восстановленный бэкап без этого поля), nid() молча начнёт
+  // штамповать id с "NaN" внутри навсегда (NaN++ === NaN), без единой ошибки в логах.
+  if (typeof db.seq !== 'number' || !isFinite(db.seq)) {
+    db.seq = 1;
+    changed = true;
+  }
+
   // настройки
   if (!db.settings) {
     db.settings = { diffThresholdPct: 5 };
