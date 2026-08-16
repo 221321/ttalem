@@ -562,12 +562,11 @@ function opWaybill(o, user) {
   };
 }
 
-// ---------- загрузочный лист: менеджер/директор выдаёт экспедитору товар утром ----------
-// Списывает с общего склада, зачисляет на подотчётный остаток экспедитора (agentStock).
-// Всё-или-ничего, как в накладной — сначала проверяем остатки по всем строкам.
+// ---------- "взял с собой": экспедитор САМ утром отмечает, что забрал со склада — без согласования
+// с менеджером (морская суета с утра — лишний шаг только мешает). Списывает с общего склада,
+// зачисляет на подотчётный остаток экспедитора (agentStock). Сверяет всё это менеджер вечером,
+// в «Ведомости по экспедитору» — сколько взял / продал / обменял / вернул, и сходится ли. ----------
 function opAgentIssue(o, user) {
-  const target = db.users.find(u => u.id === o.userId);
-  if (!target || !isAgent(target.role)) throw new Error('Экспедитор не найден');
   const items = Array.isArray(o.items) ? o.items : [];
   if (!items.length) throw new Error('Добавьте хотя бы одну позицию');
   const planned = items.map(it => {
@@ -582,13 +581,13 @@ function opAgentIssue(o, user) {
     const val = r2(x.uc * x.qty);
     x.s.qty = r2(x.s.qty - x.qty);
     x.s.value = r2(Math.max(0, x.s.value - val));
-    const ast = agentStockOf(target.id, x.p.id);
+    const ast = agentStockOf(user.id, x.p.id);
     ast.qty = r2(ast.qty + x.qty);
     ast.value = r2(ast.value + val);
     return { productId: x.p.id, name: x.p.name, unit: x.p.unit, qty: x.qty, sum: val };
   });
   const sum = r2(lines.reduce((a, l) => a + l.sum, 0));
-  return { type: 'agent_issue', targetUserId: target.id, targetName: target.name, items: lines, sum };
+  return { type: 'agent_issue', targetUserId: user.id, targetName: user.name, items: lines, sum };
 }
 
 // ---------- обмен по сроку годности на точке: свежее списывается с борта экспедитора (0 ₸,
@@ -669,6 +668,43 @@ const OPS = {
 
 // ---------- отчёты ----------
 // ---------- отчёт по реализации: выручка, себестоимость, прибыль, долги ----------
+// ---------- ведомость по экспедитору: сверка за смену (взял / продал / обменял / сдал) ----------
+// Менеджер вечером смотрит это вместо утреннего согласования загрузочного листа: экспедитор сам
+// отмечал "взял с собой" и "обмен", здесь всё сводится воедино и видно, сходится или нет.
+function buildAgentDayReport(userId, from, to) {
+  const inRange = ts => (!from || ts.slice(0, 10) >= from) && (!to || ts.slice(0, 10) <= to);
+  const ops = db.operations.filter(o => o.userId === userId && inRange(o.ts));
+  const byProduct = {};
+  function bump(pid, field, qty) {
+    if (!pid || !(qty > 0)) return;
+    const p = product(pid);
+    if (!byProduct[pid]) byProduct[pid] = { productId: pid, name: p ? p.name : '?', unit: p ? p.unit : '', issued: 0, sold: 0, exOut: 0, exBack: 0, returned: 0 };
+    byProduct[pid][field] = r2(byProduct[pid][field] + qty);
+  }
+  ops.forEach(o => {
+    if (o.type === 'agent_issue') (o.items || []).forEach(it => bump(it.productId, 'issued', it.qty));
+    else if (o.type === 'sale' && !o.cancelled) bump(o.productId, 'sold', o.qty);
+    else if (o.type === 'waybill' && !o.cancelled) (o.items || []).forEach(it => bump(it.productId, 'sold', it.qty));
+    else if (o.type === 'exchange') { bump(o.productId, 'exOut', o.qtyOut || 0); bump(o.productId, 'exBack', o.qtyBack || 0); }
+    else if (o.type === 'agent_return') (o.items || []).forEach(it => bump(it.productId, 'returned', it.factQty));
+  });
+  const rows = Object.values(byProduct).map(x => {
+    const expected = r2(x.issued - x.sold - x.exOut); // сколько должно было остаться на борту
+    const diff = r2(expected - x.returned); // >0 недостача, <0 излишек, если остаток уже сдан
+    return Object.assign(x, { expected, diff });
+  });
+  const moneyOps = ops.filter(o => (o.type === 'sale' || o.type === 'waybill') && !o.cancelled);
+  const money = {
+    revenue: r2(moneyOps.reduce((a, o) => a + (o.sum || 0), 0)),
+    cash: r2(moneyOps.reduce((a, o) => a + (o.paymentCash || 0), 0)),
+    qr: r2(moneyOps.reduce((a, o) => a + (o.paymentQr || 0), 0)),
+    debt: r2(moneyOps.reduce((a, o) => a + ((o.sum || 0) - (o.paidAmount || 0)), 0))
+  };
+  const stillOnBoard = db.agentStock[userId] ? Object.values(db.agentStock[userId]).some(s => s.qty > 0.0001) : false;
+  const brakPending = (db.agentBrak[userId] || []).length;
+  return { rows, money, stillOnBoard, brakPending };
+}
+
 function reportSales(from, to) {
   // ИСПРАВЛЕНО: раньше учитывались только 'sale', и накладные (несколько позиций одним
   // документом — их оформляют торговые/экспедиторы через "Накладная") целиком выпадали
@@ -1664,8 +1700,10 @@ function route(req, res, u, data) {
   if (p === '/api/ops' && req.method === 'POST') {
     // Экспедитор: продаёт/оформляет накладную со своего борта, меняет просрочку на точке,
     // сдаёт остаток и списывает накопленный брак при закрытии смены — больше ничего.
-    if (isAgent(role) && !['sale', 'waybill', 'exchange', 'agent_return', 'agent_brak_writeoff'].includes(data.type)) {
-      return json(res, 403, { error: 'Экспедитор может оформлять только продажу, накладную, обмен и сдачу остатка' });
+    // Экспедитор сам утром отмечает, что взял со склада — согласование с менеджером убрано (лишний
+    // шаг в утренней суете), сверяет менеджер вечером в «Ведомости по экспедитору».
+    if (isAgent(role) && !['sale', 'waybill', 'exchange', 'agent_return', 'agent_brak_writeoff', 'agent_issue'].includes(data.type)) {
+      return json(res, 403, { error: 'Экспедитор может оформлять только "взял с собой", продажу, накладную, обмен и сдачу остатка' });
     }
     if (data.type === 'receipt' && isCook(role)) return json(res, 403, { error: 'Нет прав' });
     if (data.type === 'inventory' && !isAdmin) return json(res, 403, { error: 'Инвентаризацию проводит директор' });
@@ -1674,10 +1712,8 @@ function route(req, res, u, data) {
     // Продажу можно создать только выпуском (нет отдельного шага), торговым/экспедитором (agent) или импортом из 1С (/api/1c/sales-import).
     // Директор и менеджер продажи больше не создают вручную — только смотрят историю, гасят долг и отменяют.
     if (['sale', 'waybill'].includes(data.type) && !isAgent(role)) return json(res, 403, { error: 'Продажу оформляет только торговый/экспедитор. Директору и менеджеру доступны история продаж и сверка с 1С в разделе «Продажи».' });
-    // Загрузочный лист (выдача товара экспедитору утром) — оформляет только менеджер/директор
-    if (data.type === 'agent_issue' && !(isAdmin || isManager)) return json(res, 403, { error: 'Загрузочный лист оформляет менеджер или директор' });
-    // Обмен, сдача остатка и списание брака — только сам экспедитор, по своему борту
-    if (['exchange', 'agent_return', 'agent_brak_writeoff'].includes(data.type) && !isAgent(role)) {
+    // "Взял с собой", обмен, сдача остатка и списание брака — только сам экспедитор, по своему борту
+    if (['agent_issue', 'exchange', 'agent_return', 'agent_brak_writeoff'].includes(data.type) && !isAgent(role)) {
       return json(res, 403, { error: 'Доступно только экспедитору' });
     }
     const fn = OPS[data.type];
@@ -1894,6 +1930,15 @@ if (p === '/api/ops' && req.method === 'GET') {
     items.forEach(it => { byProd[it.productId] = r2((byProd[it.productId] || 0) + it.qty); });
     const rows = Object.entries(byProd).map(([pid, qty]) => { const p = product(pid); return { productId: pid, name: p ? p.name : '?', unit: p ? p.unit : '', qty }; });
     return json(res, 200, { count: items.length, rows });
+  }
+  // ведомость по экспедитору за смену — для менеджера/директора, сверка вечером
+  if (p === '/api/report/agent-day' && req.method === 'GET') {
+    if (!(isAdmin || isManager)) return json(res, 403, { error: 'Нет прав' });
+    const targetId = u.searchParams.get('userId');
+    if (!targetId) return json(res, 400, { error: 'Не указан экспедитор' });
+    const from = u.searchParams.get('from') || today();
+    const to = u.searchParams.get('to') || today();
+    return json(res, 200, buildAgentDayReport(targetId, from, to));
   }
 
   // ---------- нал на руках у агента + сдача выручки (инкассация) ----------
