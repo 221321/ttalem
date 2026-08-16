@@ -144,6 +144,7 @@ var agentCash = 0, agentQr = 0, agentFrom = null, agentTo = null;
 var agentStockCache = []; // остаток экспедитора на борту — выдан загрузочным листом
 var agentExProduct = null, agentExQtyOut = 1, agentExQtyBack = 1, agentExClient = ''; // обмен по сроку годности
 var issueAgentId = null, issueCart = [], issueQ = ''; // менеджер: загрузочный лист экспедитору
+var issueStockCache = [];
 var agentsCache = [];
 var newUserRole = 'agent';
 
@@ -800,6 +801,7 @@ window.outSet=function(days){ var d=new Date(); outTo=d.toISOString().slice(0,10
 // оформления отсюда убрали, чтобы директор/менеджер не плодили продажи мимо этих трёх источников. ======
 var saleFrom = null, saleTo = null, salePeriod = 0;
 var saleStatusFilter = 'all', saleSearchQ = '', saleAgentFilter = '';
+var saleBottomTab = 'period'; // нижняя панель: 'period' | 'client' | 'product'
 function inPeriod(ts,from,to){ var d=(ts||'').slice(0,10); return d>=from&&d<=to; }
 async function scrSales(){
   var from=saleFrom||today(), to=saleTo||today();
@@ -925,27 +927,64 @@ async function scrSales(){
         } else {
           issueBody+='<p class="sub">Пока пусто — добавьте товары ниже.</p>';
         }
-        var issueDishes=D.products.filter(function(p){ return p.type==='dish'||p.type==='bread'; });
-        var issueRes=issueQ?filterList(issueDishes,issueQ).slice(0,10):[];
-        issueBody+='<div class="search" style="margin-top:8px"><input placeholder="Найти товар..." value="'+esc(issueQ)+'" oninput="issueSearch(this.value)" autocomplete="off"></div>'
-          +(issueQ?'<div class="srlist">'+(issueRes.map(function(p){ return '<div class="sritem" onclick="issueCartPick(\''+p.id+'\')">'+CAT(p.type).icon+' '+esc(p.name)+'</div>'; }).join('')||'<div class="sritem sub">Ничего не найдено</div>')+'</div>':'')
+        // список — фактический остаток готовой продукции на складе (не весь каталог), с количеством
+        var whStock=await api('/report/stock').catch(function(){ return []; });
+        issueStockCache=whStock.filter(function(x){ return (x.type==='dish'||x.type==='bread')&&x.qty>0.0001; })
+          .sort(function(a,b){ return a.name.localeCompare(b.name,'ru'); });
+        var issueRes=issueQ?filterList(issueStockCache,issueQ):issueStockCache;
+        issueBody+='<div class="search" style="margin-top:8px"><input placeholder="Фильтр по названию..." value="'+esc(issueQ)+'" oninput="issueSearch(this.value)" autocomplete="off"></div>'
+          +'<div class="srlist">'+(issueRes.length?issueRes.map(function(p){ return '<div class="sritem" onclick="issueCartPick(\''+p.productId+'\')">'+CAT(p.type).icon+' '+esc(p.name)+' <span class="sub">'+fmt(p.qty)+' '+p.unit+' на складе</span></div>'; }).join(''):'<div class="sritem sub">На складе нет готовой продукции с остатком</div>')+'</div>'
           +'<div style="height:10px"></div><button class="btn" onclick="issueSave()" '+(issueCart.length?'':'disabled')+'>Оформить загрузочный лист</button>';
       }
     }
     issueHtml=card('agissue','<b>🚚 Выдача экспедитору</b>',issueBody);
   }
 
-  return '<h2>💵 Продажи</h2>'+periodHtml+cashHtml+issueHtml+agentFilterHtml+sync1cHtml+'<div class="hl">Продажи за период</div>'+statusTabsHtml+searchHtmlSales+rowsHtml;
+  // --- нижняя панель: три среза одних и тех же продаж за период ---
+  var bottomTabsHtml='<div class="tabbar">'
+    +'<button class="'+(saleBottomTab==='period'?'on':'')+'" onclick="saleBottomTab=\'period\';renderInPlace()">По периоду</button>'
+    +'<button class="'+(saleBottomTab==='client'?'on':'')+'" onclick="saleBottomTab=\'client\';renderInPlace()">По клиентам</button>'
+    +'<button class="'+(saleBottomTab==='product'?'on':'')+'" onclick="saleBottomTab=\'product\';renderInPlace()">По товару</button>'
+    +'</div>';
+  var bottomBody='';
+  if(saleBottomTab==='period'){
+    bottomBody=statusTabsHtml+searchHtmlSales+rowsHtml;
+  } else if(saleBottomTab==='client'){
+    var clientRows=r.byClient||[];
+    bottomBody=!clientRows.length?'<p class="sub">Нет данных за период.</p>'
+      :'<div style="overflow-x:auto"><table class="rtable"><thead><tr><th>Клиент</th><th style="text-align:right">Купил</th><th style="text-align:right">Должен</th><th style="text-align:right">Продаж</th><th style="text-align:right">Возвратов</th></tr></thead><tbody>'
+        +clientRows.map(function(x){
+          return '<tr><td>'+esc(x.client)+'</td>'
+            +'<td style="text-align:right">'+money(x.revenue)+'</td>'
+            +'<td style="text-align:right'+(x.debt>0?';color:var(--red)':'')+'">'+money(x.debt)+'</td>'
+            +'<td style="text-align:right">'+x.count+'</td>'
+            +'<td style="text-align:right">'+(x.returnsQty?fmt(x.returnsQty)+' ('+x.returnsCount+')':'—')+'</td></tr>';
+        }).join('')
+        +'</tbody></table></div>';
+  } else if(saleBottomTab==='product'){
+    var prodRows=r.byProduct||[];
+    bottomBody=!prodRows.length?'<p class="sub">Нет данных за период.</p>'
+      :'<div style="overflow-x:auto"><table class="rtable"><thead><tr><th>Товар</th><th style="text-align:right">Взяли</th><th style="text-align:right">Сумма</th><th style="text-align:right">Продаж</th></tr></thead><tbody>'
+        +prodRows.map(function(x){
+          return '<tr><td>'+esc(x.name)+'</td><td style="text-align:right">'+fmt(x.qty)+' '+x.unit+'</td><td style="text-align:right">'+money(x.sum)+'</td><td style="text-align:right">'+x.count+'</td></tr>';
+        }).join('')
+        +'</tbody></table></div>';
+  }
+
+  return '<h2>💵 Продажи</h2>'+periodHtml+cashHtml+issueHtml+agentFilterHtml+sync1cHtml+'<div class="hl">Продажи за период</div>'+bottomTabsHtml+bottomBody;
 }
 window.saleSet=function(days){ salePeriod=days; var d=new Date(); saleTo=d.toISOString().slice(0,10); d.setDate(d.getDate()-days); saleFrom=d.toISOString().slice(0,10); render(); };
 window.issueAgentSet=function(id){ issueAgentId=id||null; issueCart=[]; issueQ=''; renderInPlace(); };
 window.issueSearch=function(v){ issueQ=v; renderInPlace(); };
 window.issueCartPick=function(id){
   var p=P(id);
-  var qty=+prompt('Количество ('+p.unit+'):','1');
+  var onWh=issueStockCache.find(function(x){ return x.productId===id; });
+  var already=issueCart.find(function(l){ return l.productId===id; });
+  var avail=onWh?r2f(onWh.qty-(already?already.qty:0)):0;
+  var qty=+prompt('Количество ('+p.unit+', на складе доступно '+fmt(avail)+'):','1');
   if(!(qty>0)) return;
-  var existing=issueCart.find(function(l){ return l.productId===id; });
-  if(existing) existing.qty=r2f(existing.qty+qty);
+  if(qty>avail+0.001){ toast('На складе только '+fmt(avail)+' '+p.unit); return; }
+  if(already) already.qty=r2f(already.qty+qty);
   else issueCart.push({productId:id,name:p.name,unit:p.unit,qty:qty});
   issueQ=''; renderInPlace();
 };
