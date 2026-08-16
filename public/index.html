@@ -810,19 +810,9 @@ async function scrSales(){
   // общий долг клиентов за всё время (не только за выбранный период) — та же цифра, что в «Отчёты» → «Долги по клиентам»
   var debtsAll=await api('/reports/run?type=debts').catch(function(){ return null; });
 
-  // --- период + KPI ---
+  // --- KPI за период (кнопки периода теперь внутри общей панели ниже, тут только цифры) ---
   var periodHtml='<div class="card">'
-    +'<div class="tabbar" style="margin-bottom:0">'
-    +'<button class="'+(salePeriod===0?'on':'')+'" onclick="saleSet(0)">Сегодня</button>'
-    +'<button class="'+(salePeriod===7?'on':'')+'" onclick="saleSet(7)">Неделя</button>'
-    +'<button class="'+(salePeriod===30?'on':'')+'" onclick="saleSet(30)">Месяц</button>'
-    +'<button class="'+(exp.saleRange?'on':'')+'" onclick="toggle(\'saleRange\')" style="width:auto;padding:8px 12px">📅</button>'
-    +'</div>'
-    +(exp.saleRange?'<div class="row" style="margin-top:10px">'
-      +'<div><label>С</label><input type="date" value="'+from+'" onchange="saleFrom=this.value;salePeriod=-1;render()"></div>'
-      +'<div><label>По</label><input type="date" value="'+to+'" onchange="saleTo=this.value;salePeriod=-1;render()"></div>'
-      +'</div>':'')
-    +'<div class="kpis" style="margin-top:14px">'
+    +'<div class="kpis">'
       +'<div><span class="l">Выручка</span><span class="n">'+money(r.totals.revenue)+'</span></div>'
       +'<div><span class="l">Себестоимость</span><span class="n" style="color:var(--mut)">'+money(r.totals.cost)+'</span></div>'
       +'<div><span class="l">Прибыль</span><span class="n" style="color:'+(r.totals.profit>=0?'var(--acc)':'var(--red)')+'">'+money(r.totals.profit)+'</span></div>'
@@ -1019,10 +1009,20 @@ async function scrSales(){
         +'</tbody></table></div>';
   }
 
-  // единая белая панель: заголовок + фильтры + сброс/счётчик + таблица — всё в одной карточке, без разрывов
+  // единая белая панель: заголовок + период + фильтры + сброс/счётчик + таблица — всё в одной карточке
   var salesPanelHtml='<div class="card">'
     +'<div class="hl" style="margin-top:0">Продажи за период</div>'
-    +'<div class="row">'
+    +'<div class="tabbar" style="margin-bottom:0">'
+    +'<button class="'+(salePeriod===0?'on':'')+'" onclick="saleSet(0)">Сегодня</button>'
+    +'<button class="'+(salePeriod===7?'on':'')+'" onclick="saleSet(7)">Неделя</button>'
+    +'<button class="'+(salePeriod===30?'on':'')+'" onclick="saleSet(30)">Месяц</button>'
+    +'<button class="'+(exp.saleRange?'on':'')+'" onclick="toggle(\'saleRange\')" style="width:auto;padding:8px 12px">📅</button>'
+    +'</div>'
+    +(exp.saleRange?'<div class="row" style="margin-top:10px">'
+      +'<div><label>С</label><input type="date" value="'+from+'" onchange="saleFrom=this.value;salePeriod=-1;render()"></div>'
+      +'<div><label>По</label><input type="date" value="'+to+'" onchange="saleTo=this.value;salePeriod=-1;render()"></div>'
+      +'</div>':'')
+    +'<div class="row" style="margin-top:10px">'
     +'<select onchange="saleBottomTab=this.value;renderInPlace()">'
       +'<option value="period" '+(saleBottomTab==='period'?'selected':'')+'>Список продаж</option>'
       +'<option value="client" '+(saleBottomTab==='client'?'selected':'')+'>По клиентам</option>'
