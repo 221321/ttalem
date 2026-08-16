@@ -952,7 +952,10 @@ async function scrSales(){
       }).join('')
       +'</tbody></table></div>';
   }
-  // --- ведомость по экспедитору: менеджер/директор сверяют вечером, а не выдают утром ---
+
+  // --- ведомость по экспедитору: та же карточка, что и раньше, плюс полная версия того же
+  // отчёта живёт в «Отчёты» (там же, где «Долги»/«По агентам»/«Касса») — по просьбе директора
+  // и то и другое: быстрый взгляд прямо на "Продажи", и полноценный отчёт в общем месте. ---
   var issueHtml='';
   if(ME.role==='admin'||ME.role==='manager'){
     agentsCache=await api('/agents').catch(function(){ return []; });
@@ -991,6 +994,7 @@ async function scrSales(){
             +(ved.brakPending?'<p class="sub" style="color:var(--amb)">⚠ Есть несписанные возвраты по сроку годности.</p>':'');
         }
       }
+      vedBody+='<div style="height:10px"></div><button class="btn sec sm" onclick="reportsAgentId=vedAgentId;reportsType=\'agentday\';go(\'reports\')">Открыть в «Отчёты» (печать/CSV)</button>';
     }
     issueHtml=card('agved','<b>📋 Ведомость по экспедитору</b>',vedBody);
   }
@@ -1118,16 +1122,27 @@ window.salePayPrompt=async function(id){
 
 // ====== Отчёты директору ======
 var reportsType='sales', reportsFrom=null, reportsTo=null, reportsPeriod=0, reportsListCache=null;
+var reportsAgentId=null;
 async function scrReports(){
   if(!reportsListCache){ reportsListCache=await api('/reports/list').catch(function(){ return []; }); }
   var meta=reportsListCache.find(function(r){ return r.id===reportsType; })||{period:false,name:''};
+
+  var agentSelectHtml='';
+  if(meta.needsAgent){
+    agentsCache=await api('/agents').catch(function(){ return []; });
+    agentSelectHtml='<div class="row" style="margin-top:10px"><select onchange="reportsAgentId=this.value;renderInPlace()">'
+      +'<option value="">— выбрать экспедитора —</option>'
+      +agentsCache.map(function(a){ return '<option value="'+a.id+'" '+(reportsAgentId===a.id?'selected':'')+'>'+esc(a.name)+'</option>'; }).join('')
+      +'</select></div>';
+  }
 
   var qs='type='+reportsType;
   if(meta.period){
     var from=reportsFrom||today(), to=reportsTo||today();
     qs+='&from='+from+'&to='+to;
   }
-  var rep=await api('/reports/run?'+qs).catch(function(e){ return {error:e.message}; });
+  if(meta.needsAgent&&reportsAgentId) qs+='&userId='+reportsAgentId;
+  var rep=(meta.needsAgent&&!reportsAgentId)?{title:meta.name,totals:[],tables:[],note:'Выберите экспедитора выше.'}:await api('/reports/run?'+qs).catch(function(e){ return {error:e.message}; });
 
   var typeButtons=reportsListCache.map(function(r){
     return '<button class="'+(r.id===reportsType?'on':'')+'" onclick="reportsSetType(\''+r.id+'\')">'+esc(r.name)+'</button>';
@@ -1150,6 +1165,8 @@ async function scrReports(){
   var contentHtml='';
   if(rep.error){
     contentHtml='<p class="sub" style="color:var(--red)">'+esc(rep.error)+'</p>';
+  } else if(rep.note){
+    contentHtml='<p class="sub">'+esc(rep.note)+'</p>';
   } else if(rep.title){
     contentHtml+='<h3 style="margin:16px 0 4px">'+esc(rep.title)+'</h3>';
     if(rep.totals&&rep.totals.length){
@@ -1167,7 +1184,7 @@ async function scrReports(){
   }
 
   return '<h2>📈 Отчёты</h2>'
-    +'<div class="card noprint"><div class="row" style="flex-wrap:wrap;gap:6px">'+typeButtons+'</div>'+periodHtml+'</div>'
+    +'<div class="card noprint"><div class="row" style="flex-wrap:wrap;gap:6px">'+typeButtons+'</div>'+agentSelectHtml+periodHtml+'</div>'
     +'<div class="card noprint" style="display:flex;gap:8px;flex-wrap:wrap">'
       +'<button class="btn sec sm" onclick="reportsDownloadCsv()">⬇️ Скачать CSV (Excel)</button>'
       +'<button class="btn sec sm" onclick="window.print()">🖨️ Печать / PDF</button>'
@@ -1178,8 +1195,10 @@ window.reportsSetType=function(t){ reportsType=t; render(); };
 window.reportsSetPeriod=function(days){ reportsPeriod=days; var d=new Date(); reportsTo=d.toISOString().slice(0,10); d.setDate(d.getDate()-days); reportsFrom=d.toISOString().slice(0,10); render(); };
 window.reportsDownloadCsv=async function(){
   var meta=(reportsListCache||[]).find(function(r){ return r.id===reportsType; })||{period:false};
+  if(meta.needsAgent&&!reportsAgentId) return toast('Сначала выберите экспедитора');
   var qs='type='+reportsType+'&format=csv';
   if(meta.period){ qs+='&from='+(reportsFrom||today())+'&to='+(reportsTo||today()); }
+  if(meta.needsAgent&&reportsAgentId){ qs+='&userId='+reportsAgentId; }
   try{
     var r=await fetch('/api'+'/reports/run?'+qs,{headers:{'x-token':TOKEN}});
     if(!r.ok) throw new Error('Ошибка скачивания');
