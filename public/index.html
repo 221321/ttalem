@@ -938,27 +938,6 @@ async function scrSales(){
   var prodRows=(r.byProduct||[]).filter(function(x){ return !saleSearchQ||x.name.toLowerCase().includes(saleSearchQ.toLowerCase()); });
   var countLabel=saleBottomTab==='client'?clientRows.length+' клиентов':saleBottomTab==='product'?prodRows.length+' позиций':filteredRows.length+' продаж';
 
-  var filterBarHtml='<div class="card">'
-    +'<div class="row">'
-    +'<select onchange="saleBottomTab=this.value;renderInPlace()">'
-      +'<option value="period" '+(saleBottomTab==='period'?'selected':'')+'>Список продаж</option>'
-      +'<option value="client" '+(saleBottomTab==='client'?'selected':'')+'>По клиентам</option>'
-      +'<option value="product" '+(saleBottomTab==='product'?'selected':'')+'>По товару</option>'
-    +'</select>'
-    +(saleBottomTab==='period'?'<select onchange="saleStatusFilter=this.value;renderInPlace()">'
-      +'<option value="all" '+(saleStatusFilter==='all'?'selected':'')+'>Все статусы</option>'
-      +'<option value="paid" '+(saleStatusFilter==='paid'?'selected':'')+'>Оплачено</option>'
-      +'<option value="debt" '+(saleStatusFilter==='debt'?'selected':'')+'>Долг</option>'
-      +'</select>':'')
-    +'</div>'
-    +(saleBottomTab==='period'&&r.byAgent.length?'<div class="row" style="margin-top:8px"><select onchange="saleAgentFilter=this.value;renderInPlace()">'+agentOpts+'</select></div>':'')
-    +'<div class="search" style="margin-top:8px"><input placeholder="Поиск по клиенту, блюду, продавцу..." value="'+esc(saleSearchQ)+'" oninput="saleSearchQ=this.value;renderInPlace()" autocomplete="off"></div>'
-    +'<div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px">'
-      +'<a href="#" onclick="salesResetFilters();return false" style="color:var(--gold);font-size:14px">Сбросить</a>'
-      +'<span class="sub">'+countLabel+'</span>'
-    +'</div>'
-    +'</div>';
-
   var bottomBody='';
   if(saleBottomTab==='period'){
     bottomBody=rowsHtml;
@@ -982,7 +961,31 @@ async function scrSales(){
         +'</tbody></table></div>';
   }
 
-  return '<h2>💵 Продажи</h2>'+periodHtml+cashHtml+issueHtml+sync1cHtml+'<div class="hl">Продажи за период</div>'+filterBarHtml+bottomBody;
+  // единая белая панель: заголовок + фильтры + сброс/счётчик + таблица — всё в одной карточке, без разрывов
+  var salesPanelHtml='<div class="card">'
+    +'<div class="hl" style="margin-top:0">Продажи за период</div>'
+    +'<div class="row">'
+    +'<select onchange="saleBottomTab=this.value;renderInPlace()">'
+      +'<option value="period" '+(saleBottomTab==='period'?'selected':'')+'>Список продаж</option>'
+      +'<option value="client" '+(saleBottomTab==='client'?'selected':'')+'>По клиентам</option>'
+      +'<option value="product" '+(saleBottomTab==='product'?'selected':'')+'>По товару</option>'
+    +'</select>'
+    +(saleBottomTab==='period'?'<select onchange="saleStatusFilter=this.value;renderInPlace()">'
+      +'<option value="all" '+(saleStatusFilter==='all'?'selected':'')+'>Все статусы</option>'
+      +'<option value="paid" '+(saleStatusFilter==='paid'?'selected':'')+'>Оплачено</option>'
+      +'<option value="debt" '+(saleStatusFilter==='debt'?'selected':'')+'>Долг</option>'
+      +'</select>':'')
+    +'</div>'
+    +(saleBottomTab==='period'&&r.byAgent.length?'<div class="row" style="margin-top:8px"><select onchange="saleAgentFilter=this.value;renderInPlace()">'+agentOpts+'</select></div>':'')
+    +'<div class="search" style="margin-top:8px"><input placeholder="Поиск по клиенту, блюду, продавцу..." value="'+esc(saleSearchQ)+'" oninput="saleSearchQ=this.value;renderInPlace()" autocomplete="off"></div>'
+    +'<div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px">'
+      +'<a href="#" onclick="salesResetFilters();return false" style="color:var(--gold);font-size:14px">Сбросить</a>'
+      +'<span class="sub">'+countLabel+'</span>'
+    +'</div>'
+    +'<div style="margin-top:14px">'+bottomBody+'</div>'
+    +'</div>';
+
+  return '<h2>💵 Продажи</h2>'+periodHtml+cashHtml+issueHtml+sync1cHtml+salesPanelHtml;
 }
 window.saleSet=function(days){ salePeriod=days; var d=new Date(); saleTo=d.toISOString().slice(0,10); d.setDate(d.getDate()-days); saleFrom=d.toISOString().slice(0,10); render(); };
 window.salesResetFilters=function(){ saleStatusFilter='all'; saleAgentFilter=''; saleSearchQ=''; render(); };
