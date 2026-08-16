@@ -801,11 +801,14 @@ window.outSet=function(days){ var d=new Date(); outTo=d.toISOString().slice(0,10
 // оформления отсюда убрали, чтобы директор/менеджер не плодили продажи мимо этих трёх источников. ======
 var saleFrom = null, saleTo = null, salePeriod = 0;
 var saleStatusFilter = 'all', saleSearchQ = '', saleAgentFilter = '';
+var saleClientFilter = '', saleProductFilter = ''; // отбор по контрагенту / по конкретному товару
 var saleBottomTab = 'period'; // нижняя панель: 'period' | 'client' | 'product'
 function inPeriod(ts,from,to){ var d=(ts||'').slice(0,10); return d>=from&&d<=to; }
 async function scrSales(){
   var from=saleFrom||today(), to=saleTo||today();
   var r=await api('/report/sales?from='+from+'&to='+to);
+  // общий долг клиентов за всё время (не только за выбранный период) — та же цифра, что в «Отчёты» → «Долги по клиентам»
+  var debtsAll=await api('/reports/run?type=debts').catch(function(){ return null; });
 
   // --- период + KPI ---
   var periodHtml='<div class="card">'
@@ -824,7 +827,10 @@ async function scrSales(){
       +'<div><span class="l">Себестоимость</span><span class="n" style="color:var(--mut)">'+money(r.totals.cost)+'</span></div>'
       +'<div><span class="l">Прибыль</span><span class="n" style="color:'+(r.totals.profit>=0?'var(--acc)':'var(--red)')+'">'+money(r.totals.profit)+'</span></div>'
     +'</div>'
-    +(r.totals.debt>0?'<div style="text-align:center;margin-top:10px"><span class="pill bad">Долги за период: '+money(r.totals.debt)+'</span></div>':'')
+    +(r.totals.debt>0||(debtsAll&&debtsAll.totals[0].value>0)?'<div style="text-align:center;margin-top:10px;display:flex;gap:8px;justify-content:center;flex-wrap:wrap">'
+      +(r.totals.debt>0?'<span class="pill bad">Долги за период: '+money(r.totals.debt)+'</span>':'')
+      +(debtsAll&&debtsAll.totals[0].value>0?'<span class="pill bad tap" onclick="saleGoDebts()">Должны всего: '+money(debtsAll.totals[0].value)+'</span>':'')
+    +'</div>':'')
     +'</div>';
 
   // --- наличные у агентов: компактный алерт ---
@@ -841,6 +847,20 @@ async function scrSales(){
   // --- фильтр по МОЛ (материально ответственное лицо — торговый/экспедитор, ФИО как в 1С) ---
   var agentOpts='<option value="">Все продавцы</option>'+r.byAgent.slice().sort(function(a,b){ return a.sellerName.localeCompare(b.sellerName,'ru'); })
     .map(function(a){ return '<option value="'+a.sellerId+'" '+(saleAgentFilter===a.sellerId?'selected':'')+'>'+esc(a.sellerName)+' ('+a.salesCount+')</option>'; }).join('');
+
+  // --- фильтр по контрагенту и по товару: ключ клиента такой же, как в группировке "по клиентам" на бэкенде ---
+  var saleClientKey=function(row){ return row.clientId || ('name:'+(row.client||'(без клиента)')); };
+  var clientNameByKey={};
+  r.rows.forEach(function(row){ clientNameByKey[saleClientKey(row)]=row.client||'(без клиента)'; });
+  var clientKeys=Object.keys(clientNameByKey).sort(function(a,b){ return clientNameByKey[a].localeCompare(clientNameByKey[b],'ru'); });
+  var clientOpts='<option value="">Все клиенты</option>'+clientKeys
+    .map(function(k){ return '<option value="'+esc(k)+'" '+(saleClientFilter===k?'selected':'')+'>'+esc(clientNameByKey[k])+'</option>'; }).join('');
+
+  var productNameById={};
+  r.rows.forEach(function(row){ (row.lines||[]).forEach(function(l){ productNameById[l.productId]=l.name; }); });
+  var productIds=Object.keys(productNameById).sort(function(a,b){ return productNameById[a].localeCompare(productNameById[b],'ru'); });
+  var productOpts='<option value="">Все товары</option>'+productIds
+    .map(function(id){ return '<option value="'+id+'" '+(saleProductFilter===id?'selected':'')+'>'+esc(productNameById[id])+'</option>'; }).join('');
 
   // --- сверка с 1С по реализации за выбранный период (и, если выбран, по МОЛ) ---
   var sync1c=await api('/1c/sales-diff').catch(function(){ return null; });
@@ -862,17 +882,20 @@ async function scrSales(){
     sync1cHtml='<p class="sub">Сверка с 1С по реализации ещё не запускалась — раздел «1С» → «Сверка реализации».</p>';
   }
 
-  // --- список продаж: фильтр по статусу, продавцу и поиску (для вида "Список") ---
-  var filteredRows = r.rows.filter(function(s){
-    if(saleAgentFilter&&s.sellerId!==saleAgentFilter) return false;
-    if(saleStatusFilter==='paid') return s.paid;
-    if(saleStatusFilter==='debt') return !s.paid;
-    return true;
-  }).filter(function(s){
+  // --- список продаж: фильтр по продавцу/статусу/поиску применяется всегда; по клиенту и товару —
+  // тоже, но их держим отдельно от baseRows, чтобы группировки "по клиентам"/"по товару" ниже могли
+  // учитывать один из этих двух фильтров, оставаясь группировкой именно по другому измерению. ---
+  var saleAgentOk=function(s){ return !saleAgentFilter||s.sellerId===saleAgentFilter; };
+  var saleStatusOk=function(s){ if(saleStatusFilter==='paid') return s.paid; if(saleStatusFilter==='debt') return !s.paid; return true; };
+  var saleSearchOk=function(s){
     if(!saleSearchQ) return true;
     var q=saleSearchQ.toLowerCase();
     return s.name.toLowerCase().includes(q) || (s.client||'').toLowerCase().includes(q) || (s.sellerName||'').toLowerCase().includes(q);
-  });
+  };
+  var saleClientOk=function(s){ return !saleClientFilter||saleClientKey(s)===saleClientFilter; };
+  var saleProductOk=function(s){ return !saleProductFilter||(s.lines||[]).some(function(l){ return l.productId===saleProductFilter; }); };
+  var baseRows=r.rows.filter(saleAgentOk).filter(saleStatusOk).filter(saleSearchOk);
+  var filteredRows=baseRows.filter(saleClientOk).filter(saleProductOk);
   var rowsHtml='';
   if(!filteredRows.length){
     rowsHtml='<p class="sub">Ничего не найдено за этот период.</p>';
@@ -933,9 +956,44 @@ async function scrSales(){
     issueHtml=card('agissue','<b>🚚 Выдача экспедитору</b>',issueBody);
   }
 
-  // --- нижняя панель: один блок фильтров (вид/статус/продавец/поиск) + сброс + счётчик + таблица ---
-  var clientRows=(r.byClient||[]).filter(function(x){ return !saleSearchQ||x.client.toLowerCase().includes(saleSearchQ.toLowerCase()); });
-  var prodRows=(r.byProduct||[]).filter(function(x){ return !saleSearchQ||x.name.toLowerCase().includes(saleSearchQ.toLowerCase()); });
+  // --- "по клиентам": группировка строится из baseRows, отфильтрованных ЕЩЁ и по товару (если выбран) —
+  // так можно узнать, какой контрагент больше всего купил именно этот товар. Сама группировка по клиенту
+  // фильтром "клиент" не режется — иначе в таблице остался бы один выбранный клиент. ---
+  var clientMap={};
+  baseRows.filter(saleProductOk).forEach(function(s){
+    var k=saleClientKey(s);
+    if(!clientMap[k]) clientMap[k]={client:s.client||'(без клиента)', revenue:0, debt:0, count:0, returnsQty:0, returnsCount:0};
+    var lineSum=saleProductFilter?(s.lines||[]).filter(function(l){ return l.productId===saleProductFilter; }).reduce(function(a,l){ return a+l.sum; },0):s.sum;
+    clientMap[k].revenue=r2f(clientMap[k].revenue+lineSum);
+    clientMap[k].count++;
+    if(!s.paid) clientMap[k].debt=r2f(clientMap[k].debt+s.debt);
+  });
+  // обмен по сроку годности (возвраты) считаем только когда явно не сузили до одного товара — обмен не привязан к productId
+  if(!saleProductFilter){
+    (r.byClient||[]).forEach(function(x){
+      if(!x.returnsQty) return;
+      var k=x.clientId||('name:'+(x.client||'(без клиента)'));
+      if(clientMap[k]) { clientMap[k].returnsQty=x.returnsQty; clientMap[k].returnsCount=x.returnsCount; }
+    });
+  }
+  var clientRows=Object.values(clientMap).filter(function(x){ return !saleSearchQ||x.client.toLowerCase().includes(saleSearchQ.toLowerCase()); })
+    .sort(function(a,b){ return b.revenue-a.revenue; });
+
+  // --- "по товару": группировка из baseRows, отфильтрованных ещё и по клиенту (если выбран) —
+  // так можно узнать, что именно чаще всего берёт конкретный контрагент. ---
+  var prodMap={};
+  baseRows.filter(saleClientOk).forEach(function(s){
+    (s.lines||[]).forEach(function(l){
+      if(saleProductFilter&&l.productId!==saleProductFilter) return;
+      if(!prodMap[l.productId]) prodMap[l.productId]={productId:l.productId, name:l.name, unit:l.unit, qty:0, sum:0, count:0};
+      prodMap[l.productId].qty=r2f(prodMap[l.productId].qty+l.qty);
+      prodMap[l.productId].sum=r2f(prodMap[l.productId].sum+l.sum);
+      prodMap[l.productId].count++;
+    });
+  });
+  var prodRows=Object.values(prodMap).filter(function(x){ return !saleSearchQ||x.name.toLowerCase().includes(saleSearchQ.toLowerCase()); })
+    .sort(function(a,b){ return b.qty-a.qty; });
+
   var countLabel=saleBottomTab==='client'?clientRows.length+' клиентов':saleBottomTab==='product'?prodRows.length+' позиций':filteredRows.length+' продаж';
 
   var bottomBody='';
@@ -976,7 +1034,14 @@ async function scrSales(){
       +'<option value="debt" '+(saleStatusFilter==='debt'?'selected':'')+'>Долг</option>'
       +'</select>':'')
     +'</div>'
-    +(saleBottomTab==='period'&&r.byAgent.length?'<div class="row" style="margin-top:8px"><select onchange="saleAgentFilter=this.value;renderInPlace()">'+agentOpts+'</select></div>':'')
+    // отбор по продавцу/контрагенту/товару — работает на всех трёх видах: если сейчас смотрим
+    // группировку "по клиентам", свой же фильтр "клиент" прячем (иначе он схлопнул бы таблицу
+    // до одной строки), но фильтр "товар" остаётся — так видно, кто больше всего купил ИМЕННО его.
+    +(r.byAgent.length||clientKeys.length||productIds.length?'<div class="row" style="margin-top:8px;flex-wrap:wrap;gap:8px">'
+      +(r.byAgent.length?'<select onchange="saleAgentFilter=this.value;renderInPlace()">'+agentOpts+'</select>':'')
+      +(saleBottomTab!=='client'&&clientKeys.length?'<select onchange="saleClientFilter=this.value;renderInPlace()">'+clientOpts+'</select>':'')
+      +(saleBottomTab!=='product'&&productIds.length?'<select onchange="saleProductFilter=this.value;renderInPlace()">'+productOpts+'</select>':'')
+    +'</div>':'')
     +'<div class="search" style="margin-top:8px"><input placeholder="Поиск по клиенту, блюду, продавцу..." value="'+esc(saleSearchQ)+'" oninput="saleSearchQ=this.value;renderInPlace()" autocomplete="off"></div>'
     +'<div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px">'
       +'<a href="#" onclick="salesResetFilters();return false" style="color:var(--gold);font-size:14px">Сбросить</a>'
@@ -988,7 +1053,8 @@ async function scrSales(){
   return '<h2>💵 Продажи</h2>'+periodHtml+cashHtml+issueHtml+sync1cHtml+salesPanelHtml;
 }
 window.saleSet=function(days){ salePeriod=days; var d=new Date(); saleTo=d.toISOString().slice(0,10); d.setDate(d.getDate()-days); saleFrom=d.toISOString().slice(0,10); render(); };
-window.salesResetFilters=function(){ saleStatusFilter='all'; saleAgentFilter=''; saleSearchQ=''; render(); };
+window.salesResetFilters=function(){ saleStatusFilter='all'; saleAgentFilter=''; saleClientFilter=''; saleProductFilter=''; saleSearchQ=''; render(); };
+window.saleGoDebts=function(){ reportsType='debts'; go('reports'); };
 window.issueAgentSet=function(id){ issueAgentId=id||null; issueCart=[]; issueQ=''; renderInPlace(); };
 window.issueSearch=function(v){ issueQ=v; renderInPlace(); };
 window.issueCartPick=function(id){
