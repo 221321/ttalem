@@ -144,9 +144,8 @@ var agentCartSel = null, agentCartQty = '1', agentCartPrice = '';
 var agentCash = 0, agentQr = 0, agentFrom = null, agentTo = null;
 var agentStockCache = []; // остаток экспедитора на борту — то, что взял сам
 var agentExProduct = null, agentExQtyOut = 1, agentExQtyBack = 1, agentExClient = ''; // обмен по сроку годности
-var myLoadCart = [], myLoadQ = ''; // экспедитор: приём товара — сам, без менеджера
-var myLoadSel = null, myLoadQty = '1';
 var myLoadStockCache = [];
+var loadCnt = {}; // экспедитор: приём товара — {productId: qty}, тот же паттерн, что pCnt на "Выпуске"
 var agentsCache = [];
 var vedAgentId = null; // менеджер: чью ведомость сейчас смотрим
 var newUserRole = 'agent';
@@ -1242,29 +1241,27 @@ async function scrAgent(){
   agentClientsCache=await api('/clients');
   var cash=await api('/cash/status');
 
-  // --- "взял с собой": экспедитор сам утром отмечает, что забрал со склада — без менеджера ---
+  // --- приём товара: экспедитор сам утром отмечает, что забрал со склада — без менеджера.
+  // Тот же паттерн, что на "Выпуске" у поваров: весь список сразу виден, степпер +/- в каждой
+  // строке, поиск не перерисовывает список (просто прячет строки), одна кнопка отправляет всё разом.
   var whStockAgent=await api('/report/stock').catch(function(){ return []; });
   myLoadStockCache=whStockAgent.filter(function(x){ return (x.type==='dish'||x.type==='bread')&&x.qty>0.0001; })
     .sort(function(a,b){ return a.name.localeCompare(b.name,'ru'); });
-  var loadBody='';
-  if(myLoadCart.length){
-    loadBody+=myLoadCart.map(function(l,i){
-      return '<div class="li"><span class="nm">'+esc(l.name)+' × '+fmt(l.qty)+' '+l.unit+'</span><span class="vl"><button class="btn sec sm" onclick="myLoadRemove('+i+')">✕</button></span></div>';
-    }).join('');
-  }
-  if(myLoadSel){
-    var loadSelP=myLoadStockCache.find(function(x){ return x.productId===myLoadSel; });
-    loadBody+='<span class="pill ok">'+esc(loadSelP?loadSelP.name:'')+'</span>'
-      +'<label>Количество, '+(loadSelP?loadSelP.unit:'')+' (в остатке '+(loadSelP?fmt(loadSelP.qty):0)+')</label>'
-      +'<input class="big" id="myLoadQtyInput" type="number" step="0.01" inputmode="decimal" value="'+myLoadQty+'" oninput="myLoadQty=this.value">'
-      +'<div style="height:10px"></div><button class="btn" onclick="myLoadAddToCart()">Добавить</button>'
-      +'<button class="btn sec sm" style="margin-top:8px" onclick="myLoadSel=null;renderInPlace()">← Выбрать другой товар</button>';
-  } else {
-    var loadRes=myLoadQ?filterList(myLoadStockCache,myLoadQ):myLoadStockCache;
-    loadBody+='<div class="search" style="margin-top:8px"><input id="myLoadSearchInput" placeholder="Найти товар на складе..." value="'+esc(myLoadQ)+'" oninput="myLoadSearch(this.value)" autocomplete="off"></div>'
-      +'<div class="srlist">'+(loadRes.length?loadRes.map(function(p){ return '<div class="sritem" onclick="myLoadPick(\''+p.productId+'\')">'+CAT(p.type).icon+' '+esc(p.name)+' <span class="sub">'+fmt(p.qty)+' '+p.unit+' на складе</span></div>'; }).join(''):'<div class="sritem sub">На складе нет готовой продукции с остатком</div>')+'</div>';
-  }
-  loadBody+='<div style="height:10px"></div><button class="btn" onclick="myLoadSave()" '+(myLoadCart.length?'':'disabled')+'>Оформить приём</button>';
+  var anyLoadCnt=Object.values(loadCnt).some(function(v){ return v>0; });
+  var loadListHtml=myLoadStockCache.map(function(p){
+    return '<div class="li load-item" data-name="'+esc(p.name.toLowerCase())+'" style="align-items:flex-start">'
+      +'<span class="nm">'+CAT(p.type).icon+' '+esc(p.name)+'<div class="sub">в остатке: '+fmt(p.qty)+' '+p.unit+'</div></span>'
+      +'<span class="step">'
+      +'<button onclick="loadStep(\''+p.productId+'\',-1)">−</button>'
+      +'<input type="number" inputmode="numeric" min="0" value="'+(loadCnt[p.productId]||0)+'" style="width:52px;text-align:center;border:1px solid var(--line);border-radius:8px;padding:9px 2px;font-size:19px;font-weight:600" onfocus="this.select()" onchange="loadSetCnt(\''+p.productId+'\',this.value)">'
+      +'<button onclick="loadStep(\''+p.productId+'\',1)">+</button>'
+      +'</span></div>';
+  }).join('');
+  var loadBody=myLoadStockCache.length
+    ? '<div class="search"><input id="loadSearch" placeholder="Найти товар..." oninput="loadSearch(this.value)" autocomplete="off"><span class="clr" id="loadSearchClr" onclick="loadClearSearch()">✕</span></div>'
+      +loadListHtml
+      +'<div style="height:10px"></div><button class="btn" '+(anyLoadCnt?'':'disabled')+' onclick="myLoadSave()">Оформить приём</button>'
+    : '<p class="sub">На складе нет готовой продукции с остатком.</p>';
   var loadCard=card('agload','<b>📥 Приём товара</b>',loadBody);
 
   // --- борт: что осталось непроданным/необменянным ---
@@ -1541,29 +1538,38 @@ window.agentExSave=async function(){
 };
 
 // --- сдача остатка на склад (закрытие борта) ---
-// --- приём товара: экспедитор сам, без менеджера ---
-window.myLoadSearch=function(v){ myLoadQ=v; renderInPlace(); };
-window.myLoadPick=function(id){ myLoadSel=id; myLoadQty='1'; myLoadQ=''; renderInPlace(); };
-window.myLoadAddToCart=function(){
-  var el=$('#myLoadQtyInput'); var qty=+(el?el.value:myLoadQty)||0;
-  if(!(qty>0)) return toast('Введите количество');
-  var p=P(myLoadSel);
-  var onWh=myLoadStockCache.find(function(x){ return x.productId===myLoadSel; });
-  var already=myLoadCart.find(function(l){ return l.productId===myLoadSel; });
-  var avail=onWh?r2f(onWh.qty-(already?already.qty:0)):0;
-  if(qty>avail+0.001){ toast('На складе только '+fmt(avail)+' '+p.unit); return; }
-  if(already) already.qty=r2f(already.qty+qty);
-  else myLoadCart.push({productId:myLoadSel,name:p.name,unit:p.unit,qty:qty});
-  myLoadSel=null; myLoadQty='1'; renderInPlace();
+// --- приём товара: экспедитор сам, без менеджера. Тот же паттерн, что pStep/pSave на "Выпуске". ---
+window.loadSearch=function(v){
+  filterDom(v,'load-item');
+  var c=$('#loadSearchClr');
+  if(c) c.style.display=v?'block':'none';
 };
-window.myLoadRemove=function(i){ myLoadCart.splice(i,1); renderInPlace(); };
+window.loadClearSearch=function(){
+  var i=$('#loadSearch');
+  if(i) i.value='';
+  loadSearch('');
+  if(i) i.focus();
+};
+window.loadStep=function(id,d){
+  var p=myLoadStockCache.find(function(x){ return x.productId===id; });
+  var max=p?p.qty:0;
+  loadCnt[id]=Math.max(0,Math.min(max,(loadCnt[id]||0)+d));
+  renderInPlace();
+};
+window.loadSetCnt=function(id,v){
+  var p=myLoadStockCache.find(function(x){ return x.productId===id; });
+  var max=p?p.qty:0;
+  loadCnt[id]=Math.max(0,Math.min(max,+v||0));
+  renderInPlace();
+};
 window.myLoadSave=async function(){
-  if(!myLoadCart.length) return;
+  var entries=Object.entries(loadCnt).filter(function(e){ return e[1]>0; });
+  if(!entries.length) return;
   await guardedSubmit(async function(){
     try{
-      await api('/ops','POST',{type:'agent_issue',items:myLoadCart.map(function(l){ return {productId:l.productId,qty:l.qty}; })});
-      toast('✅ Записано на борт');
-      myLoadCart=[]; myLoadQ='';
+      await api('/ops','POST',{type:'agent_issue',items:entries.map(function(e){ return {productId:e[0],qty:e[1]}; })});
+      toast('✅ Приём оформлен');
+      loadCnt={};
       await reload(); render();
     }catch(e){ toast(e.message); }
   });
