@@ -280,6 +280,15 @@ window.logout=logout;
 // счётчик поколений рендера: если пока грузился ответ сервера пользователь напечатал ещё
 // букву (запустился новый renderInPlace), устаревший результат не должен затирать свежий —
 // иначе поле поиска дёргается и "откатывается" на предыдущую букву.
+// защита от двойного тапа: на слабом мобильном интернете курьер может тапнуть кнопку
+// дважды (или один раз, решить что "не сработало", и ещё раз) — без этого флага улетело
+// бы два одинаковых запроса и появилась бы задвоенная продажа/накладная/обмен.
+var submitting=false;
+async function guardedSubmit(fn){
+  if(submitting) return;
+  submitting=true;
+  try{ await fn(); } finally{ submitting=false; }
+}
 var renderGen=0;
 function renderInPlace(){
   var fn=SCREENS[screen]; if(!fn) return;
@@ -1100,8 +1109,10 @@ window.salePayPrompt=async function(id){
   if(v==null) return;
   var amount=+v;
   if(!(amount>0)) return toast('Введите сумму больше нуля');
-  try{ await api('/sales/'+id+'/pay','POST',{amount:amount}); toast('✅ Оплата зачтена'); render(); }
-  catch(e){ toast(e.message); }
+  await guardedSubmit(async function(){
+    try{ await api('/sales/'+id+'/pay','POST',{amount:amount}); toast('✅ Оплата зачтена'); render(); }
+    catch(e){ toast(e.message); }
+  });
 };
 
 // ====== Отчёты директору ======
@@ -1181,23 +1192,18 @@ window.reportsDownloadCsv=async function(){
 };
 
 window.saleCancel=async function(id){
-  if(!confirm('Отменить продажу? Товар вернётся на склад, из выручки и кассы она пропадёт. Действие необратимо (кроме как оформить продажу заново).')) return;
-  try{
-    var r=await api('/sales/'+id+'/cancel','POST',{});
-    if(r.already1c&&r.already1c.status==='created'){
-      toast('⚠️ Отменено. Но в 1С уже создан документ №'+(r.already1c.docNumber||'')+' — аннулируйте его там вручную!');
-    } else {
-      toast('✅ Продажа отменена, товар вернулся на склад');
-    }
-    await reload(); render();
-  }catch(e){ toast(e.message); }
-};
-window.salePay=async function(id){
-  var el=$('#pay'+id);
-  var v=+el.value;
-  if(!(v>0)) return toast('Введите сумму оплаты');
-  try{ await api('/sales/'+id+'/pay','POST',{amount:v}); toast('✅ Оплата зачтена'); render(); }
-  catch(e){ toast(e.message); }
+  if(!confirm('Отменить продажу? Товар вернётся туда, откуда был продан (склад или борт экспедитора), из выручки и кассы она пропадёт. Действие необратимо (кроме как оформить продажу заново).')) return;
+  await guardedSubmit(async function(){
+    try{
+      var r=await api('/sales/'+id+'/cancel','POST',{});
+      if(r.already1c&&r.already1c.status==='created'){
+        toast('⚠️ Отменено. Но в 1С уже создан документ №'+(r.already1c.docNumber||'')+' — аннулируйте его там вручную!');
+      } else {
+        toast('✅ Продажа отменена');
+      }
+      await reload(); render();
+    }catch(e){ toast(e.message); }
+  });
 };
 
 // ====== ТОРГОВЫЙ / ВОДИТЕЛЬ: одна страница ======
@@ -1207,7 +1213,7 @@ function agentClientBlock(){
     return '<label>Клиент</label><div class="li"><span class="nm">'+esc(c?c.name:'?')+(c&&c.code1c?' <span class="sub">(сверен с 1С)</span>':' <span class="sub">(новый, ещё не сверен с 1С)</span>')+'</span><span class="vl"><button class="btn sec sm" onclick="agentClientId=null;agentClientQ=\'\';renderInPlace()">✕</button></span></div>';
   }
   return '<label>Клиент (необязательно)</label>'
-    +'<div class="search"><input id="agClientSearch" placeholder="Найти или добавить клиента..." value="'+esc(agentClientQ)+'" oninput="agentClientSearch(this.value)" onfocus="agentClientSearch(this.value)" autocomplete="off"></div>'
+    +'<div class="search"><input id="agClientSearch" placeholder="Найти клиента..." value="'+esc(agentClientQ)+'" oninput="agentClientSearch(this.value)" onfocus="agentClientSearch(this.value)" autocomplete="off"></div>'
     +'<div id="agClientList"></div>';
 }
 window.agentClientSearch=function(v){
@@ -1416,12 +1422,14 @@ window.agentCalc=function(){
 };
 window.agentSave=async function(){
   if(!(agentQty>0)) return toast('Введите количество');
-  try{
-    await api('/ops','POST',{type:'sale',productId:agentSel,qty:agentQty,price:agentPrice,clientId:agentClientId,paymentCash:agentCash,paymentQr:agentQr});
-    toast('✅ Продажа оформлена');
-    agentSel=null; agentQty=1; agentPrice=0; agentClientId=null; agentClientQ=''; agentCash=0; agentQr=0;
-    await reload(); render();
-  }catch(e){ toast(e.message); }
+  await guardedSubmit(async function(){
+    try{
+      await api('/ops','POST',{type:'sale',productId:agentSel,qty:agentQty,price:agentPrice,clientId:agentClientId,paymentCash:agentCash,paymentQr:agentQr});
+      toast('✅ Продажа оформлена');
+      agentSel=null; agentQty=1; agentPrice=0; agentClientId=null; agentClientQ=''; agentCash=0; agentQr=0;
+      await reload(); render();
+    }catch(e){ toast(e.message); }
+  });
 };
 window.agentSaveAddress=async function(){
   if(!agentClientId) return;
@@ -1461,19 +1469,23 @@ window.agentCartCalc=function(){
 window.agentWaybillSave=async function(){
   if(!agentCart.length) return toast('Добавьте хотя бы одну позицию');
   var address=$('#agAddress')?$('#agAddress').value:'';
-  try{
-    await api('/ops','POST',{type:'waybill',clientId:agentClientId,address:address,items:agentCart.map(function(l){ return {productId:l.productId,qty:l.qty,price:l.price}; }),paymentCash:agentCash,paymentQr:agentQr});
-    toast('✅ Накладная оформлена');
-    agentCart=[]; agentClientId=null; agentClientQ=''; agentCash=0; agentQr=0;
-    await reload(); render();
-  }catch(e){ toast(e.message); }
+  await guardedSubmit(async function(){
+    try{
+      await api('/ops','POST',{type:'waybill',clientId:agentClientId,address:address,items:agentCart.map(function(l){ return {productId:l.productId,qty:l.qty,price:l.price}; }),paymentCash:agentCash,paymentQr:agentQr});
+      toast('✅ Накладная оформлена');
+      agentCart=[]; agentClientId=null; agentClientQ=''; agentCash=0; agentQr=0;
+      await reload(); render();
+    }catch(e){ toast(e.message); }
+  });
 };
 window.agentPayDebt=async function(id){
   var amt=+($('#dp'+id)?$('#dp'+id).value:0);
   var method=$('#dm'+id)?$('#dm'+id).value:'cash';
   if(!(amt>0)) return toast('Введите сумму');
-  try{ await api('/sales/'+id+'/pay','POST',{amount:amt,method:method}); toast('✅ Оплата зачтена'); await reload(); render(); }
-  catch(e){ toast(e.message); }
+  await guardedSubmit(async function(){
+    try{ await api('/sales/'+id+'/pay','POST',{amount:amt,method:method}); toast('✅ Оплата зачтена'); await reload(); render(); }
+    catch(e){ toast(e.message); }
+  });
 };
 window.agentSetRange=function(days){ var d=new Date(); agentTo=d.toISOString().slice(0,10); d.setDate(d.getDate()-days); agentFrom=d.toISOString().slice(0,10); render(); };
 
@@ -1487,12 +1499,14 @@ window.agentExCalc=function(){
 window.agentExSave=async function(){
   agentExCalc();
   if(!(agentExQtyOut>0)&&!(agentExQtyBack>0)) return toast('Укажите количество свежего или забранного');
-  try{
-    await api('/ops','POST',{type:'exchange',productId:agentExProduct,qtyOut:agentExQtyOut,qtyBack:agentExQtyBack,client:agentExClient});
-    toast('✅ Обмен зафиксирован');
-    agentExProduct=null; agentExQtyOut=1; agentExQtyBack=1; agentExClient='';
-    await reload(); render();
-  }catch(e){ toast(e.message); }
+  await guardedSubmit(async function(){
+    try{
+      await api('/ops','POST',{type:'exchange',productId:agentExProduct,qtyOut:agentExQtyOut,qtyBack:agentExQtyBack,client:agentExClient});
+      toast('✅ Обмен зафиксирован');
+      agentExProduct=null; agentExQtyOut=1; agentExQtyBack=1; agentExClient='';
+      await reload(); render();
+    }catch(e){ toast(e.message); }
+  });
 };
 
 // --- сдача остатка на склад (закрытие борта) ---
@@ -1513,12 +1527,14 @@ window.myLoadPick=function(id){
 window.myLoadRemove=function(i){ myLoadCart.splice(i,1); renderInPlace(); };
 window.myLoadSave=async function(){
   if(!myLoadCart.length) return;
-  try{
-    await api('/ops','POST',{type:'agent_issue',items:myLoadCart.map(function(l){ return {productId:l.productId,qty:l.qty}; })});
-    toast('✅ Записано на борт');
-    myLoadCart=[]; myLoadQ='';
-    await reload(); render();
-  }catch(e){ toast(e.message); }
+  await guardedSubmit(async function(){
+    try{
+      await api('/ops','POST',{type:'agent_issue',items:myLoadCart.map(function(l){ return {productId:l.productId,qty:l.qty}; })});
+      toast('✅ Записано на борт');
+      myLoadCart=[]; myLoadQ='';
+      await reload(); render();
+    }catch(e){ toast(e.message); }
+  });
 };
 window.agentReturnOpen=function(){ exp.agreturn=true; renderInPlace(); };
 window.agentReturnSubmit=async function(){
@@ -1527,30 +1543,36 @@ window.agentReturnSubmit=async function(){
     return {productId:x.productId, factQty:el?(+el.value||0):x.qty};
   });
   if(!confirm('Сдать остаток на склад? Борт обнулится, расхождения уйдут в уведомления директору.')) return;
-  try{
-    await api('/ops','POST',{type:'agent_return',items:items});
-    toast('✅ Остаток сдан на склад');
-    exp.agreturn=false;
-    await reload(); render();
-  }catch(e){ toast(e.message); }
+  await guardedSubmit(async function(){
+    try{
+      await api('/ops','POST',{type:'agent_return',items:items});
+      toast('✅ Остаток сдан на склад');
+      exp.agreturn=false;
+      await reload(); render();
+    }catch(e){ toast(e.message); }
+  });
 };
 
 // --- списание накопленного брака (обменов) за смену ---
 window.agentBrakWriteoff=async function(){
   if(!confirm('Списать все накопленные возвраты по сроку годности за смену?')) return;
-  try{
-    await api('/ops','POST',{type:'agent_brak_writeoff'});
-    toast('✅ Возвраты списаны');
-    await reload(); render();
-  }catch(e){ toast(e.message); }
+  await guardedSubmit(async function(){
+    try{
+      await api('/ops','POST',{type:'agent_brak_writeoff'});
+      toast('✅ Возвраты списаны');
+      await reload(); render();
+    }catch(e){ toast(e.message); }
+  });
 };
 
 window.cashHandover=async function(){
   var amount=+$('#chAmount').value, note=$('#chNote')?$('#chNote').value:'';
   if(!(amount>0)) return toast('Введите сумму');
   if(!confirm('Сдать '+money(amount)+' наличными?')) return;
-  try{ await api('/cash/handover','POST',{amount:amount,note:note}); toast('✅ Сдача зафиксирована'); render(); }
-  catch(e){ toast(e.message); }
+  await guardedSubmit(async function(){
+    try{ await api('/cash/handover','POST',{amount:amount,note:note}); toast('✅ Сдача зафиксирована'); render(); }
+    catch(e){ toast(e.message); }
+  });
 };
 
 // ====== Потери ======
