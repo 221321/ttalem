@@ -267,11 +267,31 @@ window.alertsRead=async function(){
 window.go=async function(s){ screen=s;sessionStorage.setItem('screen',s);wSel=null;wDone=null;exp={};await reload();render(); };
 window.logout=logout;
 
+// счётчик поколений рендера: если пока грузился ответ сервера пользователь напечатал ещё
+// букву (запустился новый renderInPlace), устаревший результат не должен затирать свежий —
+// иначе поле поиска дёргается и "откатывается" на предыдущую букву.
+var renderGen=0;
 function renderInPlace(){
   var fn=SCREENS[screen]; if(!fn) return;
+  var myGen=++renderGen;
+  // ПОЛЕ ВВОДА, В КОТОРОМ СЕЙЧАС ПЕЧАТАЮТ, ТЕРЯЕТ ФОКУС ПРИ ПОЛНОЙ ПЕРЕРИСОВКЕ innerHTML —
+  // старый <input> уничтожается, новый создаётся без фокуса, и вторая буква уже никуда не попадает.
+  // Запоминаем, что было сфокусировано и где стоял курсор, и восстанавливаем после перерисовки.
+  var active=document.activeElement;
+  var activeId=(active&&active.id)?active.id:null;
+  var selStart=null, selEnd=null;
+  if(activeId&&active&&typeof active.selectionStart==='number'){ selStart=active.selectionStart; selEnd=active.selectionEnd; }
+  function restoreFocus(){
+    if(!activeId) return;
+    var el=document.getElementById(activeId);
+    if(el&&document.activeElement!==el){
+      el.focus();
+      if(selStart!=null&&el.setSelectionRange){ try{ el.setSelectionRange(selStart,selEnd); }catch(e){} }
+    }
+  }
   var out=fn();
-  if(out instanceof Promise) out.then(function(h){ if($('#m')) $('#m').innerHTML=h; }).catch(function(e){ if($('#m')) $('#m').innerHTML='<p class="sub">'+esc(e.message)+'</p>'; });
-  else if($('#m')) $('#m').innerHTML=out;
+  if(out instanceof Promise) out.then(function(h){ if(myGen!==renderGen) return; if($('#m')){ $('#m').innerHTML=h; restoreFocus(); } }).catch(function(e){ if(myGen!==renderGen) return; if($('#m')) $('#m').innerHTML='<p class="sub">'+esc(e.message)+'</p>'; });
+  else if($('#m')){ $('#m').innerHTML=out; restoreFocus(); }
 }
 
 // ====== ПОВАР: ОБРАБОТКА ======
@@ -938,7 +958,7 @@ async function scrSales(){
         issueStockCache=whStock.filter(function(x){ return (x.type==='dish'||x.type==='bread')&&x.qty>0.0001; })
           .sort(function(a,b){ return a.name.localeCompare(b.name,'ru'); });
         var issueRes=issueQ?filterList(issueStockCache,issueQ):issueStockCache;
-        issueBody+='<div class="search" style="margin-top:8px"><input placeholder="Фильтр по названию..." value="'+esc(issueQ)+'" oninput="issueSearch(this.value)" autocomplete="off"></div>'
+        issueBody+='<div class="search" style="margin-top:8px"><input id="issueSearchInput" placeholder="Фильтр по названию..." value="'+esc(issueQ)+'" oninput="issueSearch(this.value)" autocomplete="off"></div>'
           +'<div class="srlist">'+(issueRes.length?issueRes.map(function(p){ return '<div class="sritem" onclick="issueCartPick(\''+p.productId+'\')">'+CAT(p.type).icon+' '+esc(p.name)+' <span class="sub">'+fmt(p.qty)+' '+p.unit+' на складе</span></div>'; }).join(''):'<div class="sritem sub">На складе нет готовой продукции с остатком</div>')+'</div>'
           +'<div style="height:10px"></div><button class="btn" onclick="issueSave()" '+(issueCart.length?'':'disabled')+'>Оформить загрузочный лист</button>';
       }
@@ -1042,7 +1062,7 @@ async function scrSales(){
       +(saleBottomTab!=='client'&&clientKeys.length?'<select onchange="saleClientFilter=this.value;renderInPlace()">'+clientOpts+'</select>':'')
       +(saleBottomTab!=='product'&&productIds.length?'<select onchange="saleProductFilter=this.value;renderInPlace()">'+productOpts+'</select>':'')
     +'</div>':'')
-    +'<div class="search" style="margin-top:8px"><input placeholder="Поиск по клиенту, блюду, продавцу..." value="'+esc(saleSearchQ)+'" oninput="saleSearchQ=this.value;renderInPlace()" autocomplete="off"></div>'
+    +'<div class="search" style="margin-top:8px"><input id="saleSearchInput" placeholder="Поиск по клиенту, блюду, продавцу..." value="'+esc(saleSearchQ)+'" oninput="saleSearchQ=this.value;renderInPlace()" autocomplete="off"></div>'
     +'<div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px">'
       +'<a href="#" onclick="salesResetFilters();return false" style="color:var(--gold);font-size:14px">Сбросить</a>'
       +'<span class="sub">'+countLabel+'</span>'
