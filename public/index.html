@@ -182,7 +182,16 @@ async function api(path,method,body){
   if(!r.ok) throw new Error(j.error||'Ошибка');
   return j;
 }
-function logout(){ TOKEN='';ME=null;sessionStorage.clear();pickedUser=null;pin='';render(); }
+function logout(){
+  TOKEN='';ME=null;sessionStorage.clear();pickedUser=null;pin='';
+  // ИСПРАВЛЕНО: список доступных отчётов кэшировался на весь сеанс браузера (fetch once).
+  // Если в одной вкладке сначала зашли директором/техником, потом вышли и зашли менеджером —
+  // список отчётов оставался от прошлой роли (тех/директор), а бэкенд на клик закономерно
+  // резал 403 "доступен только директору", хотя менеджеру этот отчёт вообще не должен был
+  // предлагаться. Сбрасываем кэш и выбранный тип отчёта при каждом выходе.
+  reportsListCache=null; reportsType='sales'; reportsFrom=null; reportsTo=null; reportsPeriod=0;
+  render();
+}
 async function reload(){ D=await api('/bootstrap'); }
 function opTime(o){ return new Date(o.ts).toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'}); }
 function filterList(list,q){ var lo=q.toLowerCase(); return lo?list.filter(function(p){ return p.name.toLowerCase().includes(lo); }):list; }
