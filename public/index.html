@@ -839,9 +839,8 @@ async function scrSales(){
   }
 
   // --- фильтр по МОЛ (материально ответственное лицо — торговый/экспедитор, ФИО как в 1С) ---
-  var agentOpts='<option value="">Все МОЛ</option>'+r.byAgent.slice().sort(function(a,b){ return a.sellerName.localeCompare(b.sellerName,'ru'); })
+  var agentOpts='<option value="">Все продавцы</option>'+r.byAgent.slice().sort(function(a,b){ return a.sellerName.localeCompare(b.sellerName,'ru'); })
     .map(function(a){ return '<option value="'+a.sellerId+'" '+(saleAgentFilter===a.sellerId?'selected':'')+'>'+esc(a.sellerName)+' ('+a.salesCount+')</option>'; }).join('');
-  var agentFilterHtml=r.byAgent.length?'<div class="card"><label>МОЛ (продавец/экспедитор)</label><select onchange="saleAgentFilter=this.value;renderInPlace()">'+agentOpts+'</select></div>':'';
 
   // --- сверка с 1С по реализации за выбранный период (и, если выбран, по МОЛ) ---
   var sync1c=await api('/1c/sales-diff').catch(function(){ return null; });
@@ -863,7 +862,7 @@ async function scrSales(){
     sync1cHtml='<p class="sub">Сверка с 1С по реализации ещё не запускалась — раздел «1С» → «Сверка реализации».</p>';
   }
 
-  // --- список продаж: таблица с фильтром по статусу, МОЛ и поиском ---
+  // --- список продаж: фильтр по статусу, продавцу и поиску (для вида "Список") ---
   var filteredRows = r.rows.filter(function(s){
     if(saleAgentFilter&&s.sellerId!==saleAgentFilter) return false;
     if(saleStatusFilter==='paid') return s.paid;
@@ -874,12 +873,6 @@ async function scrSales(){
     var q=saleSearchQ.toLowerCase();
     return s.name.toLowerCase().includes(q) || (s.client||'').toLowerCase().includes(q) || (s.sellerName||'').toLowerCase().includes(q);
   });
-  var statusTabsHtml='<div class="tabbar">'
-    +'<button class="'+(saleStatusFilter==='all'?'on':'')+'" onclick="saleStatusFilter=\'all\';renderInPlace()">Все ('+r.rows.length+')</button>'
-    +'<button class="'+(saleStatusFilter==='paid'?'on':'')+'" onclick="saleStatusFilter=\'paid\';renderInPlace()">Оплачено ('+r.rows.filter(function(s){return s.paid;}).length+')</button>'
-    +'<button class="'+(saleStatusFilter==='debt'?'on':'')+'" onclick="saleStatusFilter=\'debt\';renderInPlace()">Долг ('+r.rows.filter(function(s){return !s.paid;}).length+')</button>'
-    +'</div>';
-  var searchHtmlSales='<div class="search"><input id="saleSearchInput" placeholder="Поиск по клиенту, блюду, продавцу..." value="'+esc(saleSearchQ)+'" oninput="saleSearchQ=this.value;renderInPlace()" autocomplete="off"></div>';
   var rowsHtml='';
   if(!filteredRows.length){
     rowsHtml='<p class="sub">Ничего не найдено за этот период.</p>';
@@ -940,17 +933,36 @@ async function scrSales(){
     issueHtml=card('agissue','<b>🚚 Выдача экспедитору</b>',issueBody);
   }
 
-  // --- нижняя панель: три среза одних и тех же продаж за период ---
-  var bottomTabsHtml='<div class="tabbar">'
-    +'<button class="'+(saleBottomTab==='period'?'on':'')+'" onclick="saleBottomTab=\'period\';renderInPlace()">По периоду</button>'
-    +'<button class="'+(saleBottomTab==='client'?'on':'')+'" onclick="saleBottomTab=\'client\';renderInPlace()">По клиентам</button>'
-    +'<button class="'+(saleBottomTab==='product'?'on':'')+'" onclick="saleBottomTab=\'product\';renderInPlace()">По товару</button>'
+  // --- нижняя панель: один блок фильтров (вид/статус/продавец/поиск) + сброс + счётчик + таблица ---
+  var clientRows=(r.byClient||[]).filter(function(x){ return !saleSearchQ||x.client.toLowerCase().includes(saleSearchQ.toLowerCase()); });
+  var prodRows=(r.byProduct||[]).filter(function(x){ return !saleSearchQ||x.name.toLowerCase().includes(saleSearchQ.toLowerCase()); });
+  var countLabel=saleBottomTab==='client'?clientRows.length+' клиентов':saleBottomTab==='product'?prodRows.length+' позиций':filteredRows.length+' продаж';
+
+  var filterBarHtml='<div class="card">'
+    +'<div class="row">'
+    +'<select onchange="saleBottomTab=this.value;renderInPlace()">'
+      +'<option value="period" '+(saleBottomTab==='period'?'selected':'')+'>Список продаж</option>'
+      +'<option value="client" '+(saleBottomTab==='client'?'selected':'')+'>По клиентам</option>'
+      +'<option value="product" '+(saleBottomTab==='product'?'selected':'')+'>По товару</option>'
+    +'</select>'
+    +(saleBottomTab==='period'?'<select onchange="saleStatusFilter=this.value;renderInPlace()">'
+      +'<option value="all" '+(saleStatusFilter==='all'?'selected':'')+'>Все статусы</option>'
+      +'<option value="paid" '+(saleStatusFilter==='paid'?'selected':'')+'>Оплачено</option>'
+      +'<option value="debt" '+(saleStatusFilter==='debt'?'selected':'')+'>Долг</option>'
+      +'</select>':'')
+    +'</div>'
+    +(saleBottomTab==='period'&&r.byAgent.length?'<div class="row" style="margin-top:8px"><select onchange="saleAgentFilter=this.value;renderInPlace()">'+agentOpts+'</select></div>':'')
+    +'<div class="search" style="margin-top:8px"><input placeholder="Поиск по клиенту, блюду, продавцу..." value="'+esc(saleSearchQ)+'" oninput="saleSearchQ=this.value;renderInPlace()" autocomplete="off"></div>'
+    +'<div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px">'
+      +'<a href="#" onclick="salesResetFilters();return false" style="color:var(--gold);font-size:14px">Сбросить</a>'
+      +'<span class="sub">'+countLabel+'</span>'
+    +'</div>'
     +'</div>';
+
   var bottomBody='';
   if(saleBottomTab==='period'){
-    bottomBody=statusTabsHtml+searchHtmlSales+rowsHtml;
+    bottomBody=rowsHtml;
   } else if(saleBottomTab==='client'){
-    var clientRows=r.byClient||[];
     bottomBody=!clientRows.length?'<p class="sub">Нет данных за период.</p>'
       :'<div style="overflow-x:auto"><table class="rtable"><thead><tr><th>Клиент</th><th style="text-align:right">Купил</th><th style="text-align:right">Должен</th><th style="text-align:right">Продаж</th><th style="text-align:right">Возвратов</th></tr></thead><tbody>'
         +clientRows.map(function(x){
@@ -962,7 +974,6 @@ async function scrSales(){
         }).join('')
         +'</tbody></table></div>';
   } else if(saleBottomTab==='product'){
-    var prodRows=r.byProduct||[];
     bottomBody=!prodRows.length?'<p class="sub">Нет данных за период.</p>'
       :'<div style="overflow-x:auto"><table class="rtable"><thead><tr><th>Товар</th><th style="text-align:right">Взяли</th><th style="text-align:right">Сумма</th><th style="text-align:right">Продаж</th></tr></thead><tbody>'
         +prodRows.map(function(x){
@@ -971,9 +982,10 @@ async function scrSales(){
         +'</tbody></table></div>';
   }
 
-  return '<h2>💵 Продажи</h2>'+periodHtml+cashHtml+issueHtml+agentFilterHtml+sync1cHtml+'<div class="hl">Продажи за период</div>'+bottomTabsHtml+bottomBody;
+  return '<h2>💵 Продажи</h2>'+periodHtml+cashHtml+issueHtml+sync1cHtml+'<div class="hl">Продажи за период</div>'+filterBarHtml+bottomBody;
 }
 window.saleSet=function(days){ salePeriod=days; var d=new Date(); saleTo=d.toISOString().slice(0,10); d.setDate(d.getDate()-days); saleFrom=d.toISOString().slice(0,10); render(); };
+window.salesResetFilters=function(){ saleStatusFilter='all'; saleAgentFilter=''; saleSearchQ=''; render(); };
 window.issueAgentSet=function(id){ issueAgentId=id||null; issueCart=[]; issueQ=''; renderInPlace(); };
 window.issueSearch=function(v){ issueQ=v; renderInPlace(); };
 window.issueCartPick=function(id){
