@@ -181,6 +181,12 @@ function departmentForType(type) {
   // из-за чего в 1С плодились дубли контрагентов по каждой опечатке в имени
   if (!Array.isArray(db.clients)) { db.clients = []; changed = true; }
 
+  // подотчётный остаток экспедитора («борт»): выдали утром — числится за ним, не на общем складе.
+  // db.agentStock[userId][productId] = {qty, value}. db.agentBrak[userId] = [{productId, qty, ts, client}]
+  // — накопленные при обмене просроченные единицы, списываются одним актом при сдаче смены.
+  if (!db.agentStock || typeof db.agentStock !== 'object') { db.agentStock = {}; changed = true; }
+  if (!db.agentBrak || typeof db.agentBrak !== 'object') { db.agentBrak = {}; changed = true; }
+
   // сдачи наличности агентами/водителями (инкассация) — сколько и когда сдали
   if (!Array.isArray(db.cashHandovers)) { db.cashHandovers = []; changed = true; }
 
@@ -246,6 +252,18 @@ function totalStock(pid) {
   return { qty, value };
 }
 function product(pid) { return db.products.find(p => p.id === pid); }
+// ---------- подотчётный остаток экспедитора («борт»): выдан утром загрузочным листом,
+// продажи/обмены экспедитора списываются отсюда, а не с общего склада ----------
+function agentStockOf(userId, pid) {
+  if (!db.agentStock[userId]) db.agentStock[userId] = {};
+  if (!db.agentStock[userId][pid]) db.agentStock[userId][pid] = { qty: 0, value: 0 };
+  return db.agentStock[userId][pid];
+}
+function agentUnitCost(userId, pid) {
+  const s = agentStockOf(userId, pid);
+  if (s.qty > 0.0001) return s.value / s.qty;
+  return unitCost(pid); // на борту по этой позиции пусто — берём текущую себестоимость склада
+}
 // множитель на списание сырья с поправкой на % отхода при чистке/нарезке
 // (например помидор с wastePct=10 — на каждые 100г "в блюде" спишется 111г сырого со склада)
 function wasteMultiplier(c) {
@@ -439,14 +457,20 @@ function opWriteoff(o) {
   });
   return { type: 'writeoff', reason: o.reason || 'списание', items: rows, sum: r2(rows.reduce((a, r) => a + r.sum, 0)) };
 }
-function opSale(o) {
+function opSale(o, user) {
   const p = product(o.productId);
   if (!p) throw new Error('Продукт не найден');
   if (!(o.qty > 0)) throw new Error('Количество должно быть больше нуля');
   const skId = MAIN_SK;
-  const s = stockOf(o.productId, skId);
-  if (s.qty + 0.001 < o.qty) throw new Error('Недостаточно «' + p.name + '» на складе: есть ' + r2(s.qty) + ', требуется ' + o.qty + '. Сначала сделайте выпуск.');
-  const uc = unitCost(o.productId);
+  // экспедитор продаёт со своего «борта» (выдан утром загрузочным листом), а не с общего склада
+  const fromAgent = user && isAgent(user.role);
+  const s = fromAgent ? agentStockOf(user.id, o.productId) : stockOf(o.productId, skId);
+  if (s.qty + 0.001 < o.qty) {
+    throw new Error(fromAgent
+      ? 'Недостаточно «' + p.name + '» на борту: есть ' + r2(s.qty) + ', требуется ' + o.qty + '. Получите загрузочный лист у менеджера.'
+      : 'Недостаточно «' + p.name + '» на складе: есть ' + r2(s.qty) + ', требуется ' + o.qty + '. Сначала сделайте выпуск.');
+  }
+  const uc = fromAgent ? agentUnitCost(user.id, o.productId) : unitCost(o.productId);
   const costSum = r2(uc * o.qty);
   const price = o.price != null && o.price !== '' ? +o.price : (p.salePrice || 0);
   const sum = r2(price * o.qty);
@@ -484,17 +508,23 @@ function opSale(o) {
 // накладная — несколько позиций одним документом (как в Жайыке: клиент + адрес + список строк).
 // Всё-или-ничего: сначала проверяем остатки по ВСЕМ строкам, потом списываем — чтобы не списать половину
 // накладной и не упереться в нехватку на третьей позиции.
-function opWaybill(o) {
+function opWaybill(o, user) {
   const items = Array.isArray(o.items) ? o.items : [];
   if (!items.length) throw new Error('Добавьте хотя бы одну позицию');
+  const fromAgent = user && isAgent(user.role);
   const planned = items.map(it => {
     const p = product(it.productId);
     if (!p) throw new Error('Продукт не найден: ' + it.productId);
     if (!(+it.qty > 0)) throw new Error('Количество должно быть больше нуля: ' + p.name);
     const skId = MAIN_SK;
-    const s = stockOf(it.productId, skId);
-    if (s.qty + 0.001 < +it.qty) throw new Error('Недостаточно «' + p.name + '» на складе: есть ' + r2(s.qty) + ', требуется ' + it.qty);
-    const uc = unitCost(it.productId);
+    // экспедитор оформляет накладную со своего «борта», а не с общего склада
+    const s = fromAgent ? agentStockOf(user.id, it.productId) : stockOf(it.productId, skId);
+    if (s.qty + 0.001 < +it.qty) {
+      throw new Error(fromAgent
+        ? 'Недостаточно «' + p.name + '» на борту: есть ' + r2(s.qty) + ', требуется ' + it.qty
+        : 'Недостаточно «' + p.name + '» на складе: есть ' + r2(s.qty) + ', требуется ' + it.qty);
+    }
+    const uc = fromAgent ? agentUnitCost(user.id, it.productId) : unitCost(it.productId);
     const price = it.price != null && it.price !== '' ? +it.price : (p.salePrice || 0);
     const qty = +it.qty;
     return { p, s, skId, uc, price, qty, costSum: r2(uc * qty), sum: r2(price * qty) };
@@ -531,7 +561,111 @@ function opWaybill(o) {
     paymentCash, paymentQr, paymentDebt, paid, paidAmount
   };
 }
-const OPS = { receipt: opReceipt, processing: opProcessing, production: opProduction, inventory: opInventory, move: opMove, writeoff: opWriteoff, sale: opSale, waybill: opWaybill };
+
+// ---------- загрузочный лист: менеджер/директор выдаёт экспедитору товар утром ----------
+// Списывает с общего склада, зачисляет на подотчётный остаток экспедитора (agentStock).
+// Всё-или-ничего, как в накладной — сначала проверяем остатки по всем строкам.
+function opAgentIssue(o, user) {
+  const target = db.users.find(u => u.id === o.userId);
+  if (!target || !isAgent(target.role)) throw new Error('Экспедитор не найден');
+  const items = Array.isArray(o.items) ? o.items : [];
+  if (!items.length) throw new Error('Добавьте хотя бы одну позицию');
+  const planned = items.map(it => {
+    const p = product(it.productId);
+    if (!p) throw new Error('Продукт не найден: ' + it.productId);
+    if (!(+it.qty > 0)) throw new Error('Количество должно быть больше нуля: ' + p.name);
+    const s = stockOf(it.productId, MAIN_SK);
+    if (s.qty + 0.001 < +it.qty) throw new Error('Недостаточно «' + p.name + '» на складе: есть ' + r2(s.qty) + ', требуется ' + it.qty);
+    return { p, s, uc: unitCost(it.productId), qty: +it.qty };
+  });
+  const lines = planned.map(x => {
+    const val = r2(x.uc * x.qty);
+    x.s.qty = r2(x.s.qty - x.qty);
+    x.s.value = r2(Math.max(0, x.s.value - val));
+    const ast = agentStockOf(target.id, x.p.id);
+    ast.qty = r2(ast.qty + x.qty);
+    ast.value = r2(ast.value + val);
+    return { productId: x.p.id, name: x.p.name, unit: x.p.unit, qty: x.qty, sum: val };
+  });
+  const sum = r2(lines.reduce((a, l) => a + l.sum, 0));
+  return { type: 'agent_issue', targetUserId: target.id, targetName: target.name, items: lines, sum };
+}
+
+// ---------- обмен по сроку годности на точке: свежее списывается с борта экспедитора (0 ₸,
+// это не продажа), забранное просроченное НЕ списывается сразу — копится в agentBrak и уходит
+// одним актом списания при сдаче смены (opAgentBrakWriteoff) ----------
+function opExchange(o, user) {
+  const p = product(o.productId);
+  if (!p) throw new Error('Продукт не найден');
+  const qtyOut = r2(+o.qtyOut || 0);   // свежего отдано взамен
+  const qtyBack = r2(+o.qtyBack || 0); // просроченного забрано с точки
+  if (!(qtyOut > 0) && !(qtyBack > 0)) throw new Error('Укажите количество свежего или забранного');
+  if (qtyOut > 0) {
+    const s = agentStockOf(user.id, o.productId);
+    if (s.qty + 0.001 < qtyOut) throw new Error('Недостаточно «' + p.name + '» на борту: есть ' + r2(s.qty) + ', требуется ' + qtyOut);
+    const val = r2(agentUnitCost(user.id, o.productId) * qtyOut);
+    s.qty = r2(s.qty - qtyOut);
+    s.value = r2(Math.max(0, s.value - val));
+  }
+  if (qtyBack > 0) {
+    if (!db.agentBrak[user.id]) db.agentBrak[user.id] = [];
+    db.agentBrak[user.id].push({ productId: o.productId, qty: qtyBack, ts: new Date().toISOString(), client: (o.client || '').trim() });
+  }
+  return { type: 'exchange', productId: o.productId, name: p.name, unit: p.unit, qtyOut, qtyBack, client: (o.client || '').trim() };
+}
+
+// ---------- сдача остатка при закрытии смены: экспедитор указывает фактическое количество
+// по каждой позиции своего борта, расхождение с учётным идёт через тот же checkDiff, что и
+// обычная инвентаризация; фактический остаток возвращается на общий склад по себестоимости борта ----------
+function opAgentReturnStock(o, user) {
+  const submitted = {};
+  (Array.isArray(o.items) ? o.items : []).forEach(it => { submitted[it.productId] = +it.factQty || 0; });
+  const st = db.agentStock[user.id] || {};
+  const rows = [];
+  Object.keys(st).forEach(pid => {
+    const rec = st[pid];
+    if (!(rec.qty > 0.0001) && !(pid in submitted)) return;
+    const expectedQty = rec.qty;
+    const factQty = pid in submitted ? submitted[pid] : 0;
+    const uc = expectedQty > 0.0001 ? rec.value / expectedQty : unitCost(pid);
+    checkDiff(pid, factQty, expectedQty);
+    if (factQty > 0.0001) {
+      const s = stockOf(pid, MAIN_SK);
+      const val = r2(uc * factQty);
+      s.qty = r2(s.qty + factQty);
+      s.value = r2(s.value + val);
+    }
+    const p = product(pid);
+    rows.push({ productId: pid, name: p ? p.name : '?', unit: p ? p.unit : '', expectedQty, factQty, diff: r2(factQty - expectedQty) });
+    delete db.agentStock[user.id][pid];
+  });
+  if (!rows.length) throw new Error('На борту пусто — нечего сдавать');
+  return { type: 'agent_return', items: rows };
+}
+
+// ---------- списание накопленного брака (обменов по сроку годности) одним актом при сдаче смены.
+// Физически эти единицы уже были списаны как проданные раньше (обмен — не возврат на склад),
+// поэтому здесь НЕ трогаем остатки склада/борта — это только финансовая фиксация потерь ----------
+function opAgentBrakWriteoff(o, user) {
+  const items = db.agentBrak[user.id] || [];
+  if (!items.length) throw new Error('Нечего списывать — обменов не было');
+  const byProd = {};
+  items.forEach(it => { byProd[it.productId] = r2((byProd[it.productId] || 0) + it.qty); });
+  const rows = Object.entries(byProd).map(([pid, qty]) => {
+    const p = product(pid);
+    const uc = unitCost(pid);
+    return { productId: pid, name: p ? p.name : '?', unit: p ? p.unit : '', qty, sum: r2(uc * qty) };
+  });
+  const sum = r2(rows.reduce((a, r) => a + r.sum, 0));
+  db.agentBrak[user.id] = [];
+  return { type: 'agent_brak_writeoff', reason: 'обмен по сроку годности', items: rows, sum };
+}
+
+const OPS = {
+  receipt: opReceipt, processing: opProcessing, production: opProduction, inventory: opInventory, move: opMove,
+  writeoff: opWriteoff, sale: opSale, waybill: opWaybill,
+  agent_issue: opAgentIssue, exchange: opExchange, agent_return: opAgentReturnStock, agent_brak_writeoff: opAgentBrakWriteoff
+};
 
 // ---------- отчёты ----------
 // ---------- отчёт по реализации: выручка, себестоимость, прибыль, долги ----------
@@ -1365,6 +1499,11 @@ function route(req, res, u, data) {
     if (!isAdmin) return json(res, 403, { error: 'Только директор' });
     return json(res, 200, db.users.map(x => ({ id: x.id, name: x.name, role: x.role })));
   }
+  // список экспедиторов — для менеджера/директора, чтобы выбрать кому оформить загрузочный лист
+  if (p === '/api/agents' && req.method === 'GET') {
+    if (!(isAdmin || isManager)) return json(res, 403, { error: 'Нет прав' });
+    return json(res, 200, db.users.filter(u => isAgent(u.role)).map(u => ({ id: u.id, name: u.name })));
+  }
   if (p === '/api/users' && req.method === 'POST') {
     if (!isAdmin) return json(res, 403, { error: 'Только директор' });
     const name = String(data.name || '').trim();
@@ -1469,7 +1608,11 @@ function route(req, res, u, data) {
 
   // ---------- операции ----------
   if (p === '/api/ops' && req.method === 'POST') {
-    if (isAgent(role) && !['sale', 'waybill'].includes(data.type)) return json(res, 403, { error: 'Торговый/экспедитор может только оформлять продажу' });
+    // Экспедитор: продаёт/оформляет накладную со своего борта, меняет просрочку на точке,
+    // сдаёт остаток и списывает накопленный брак при закрытии смены — больше ничего.
+    if (isAgent(role) && !['sale', 'waybill', 'exchange', 'agent_return', 'agent_brak_writeoff'].includes(data.type)) {
+      return json(res, 403, { error: 'Экспедитор может оформлять только продажу, накладную, обмен и сдачу остатка' });
+    }
     if (data.type === 'receipt' && isCook(role)) return json(res, 403, { error: 'Нет прав' });
     if (data.type === 'inventory' && !isAdmin) return json(res, 403, { error: 'Инвентаризацию проводит директор' });
     if (data.type === 'writeoff' && isCook(role)) return json(res, 403, { error: 'Акт списания оформляет менеджер или директор' });
@@ -1477,6 +1620,12 @@ function route(req, res, u, data) {
     // Продажу можно создать только выпуском (нет отдельного шага), торговым/экспедитором (agent) или импортом из 1С (/api/1c/sales-import).
     // Директор и менеджер продажи больше не создают вручную — только смотрят историю, гасят долг и отменяют.
     if (['sale', 'waybill'].includes(data.type) && !isAgent(role)) return json(res, 403, { error: 'Продажу оформляет только торговый/экспедитор. Директору и менеджеру доступны история продаж и сверка с 1С в разделе «Продажи».' });
+    // Загрузочный лист (выдача товара экспедитору утром) — оформляет только менеджер/директор
+    if (data.type === 'agent_issue' && !(isAdmin || isManager)) return json(res, 403, { error: 'Загрузочный лист оформляет менеджер или директор' });
+    // Обмен, сдача остатка и списание брака — только сам экспедитор, по своему борту
+    if (['exchange', 'agent_return', 'agent_brak_writeoff'].includes(data.type) && !isAgent(role)) {
+      return json(res, 403, { error: 'Доступно только экспедитору' });
+    }
     const fn = OPS[data.type];
     if (!fn) return json(res, 400, { error: 'Неизвестная операция' });
     const rec = fn(data, user);
@@ -1668,6 +1817,29 @@ if (p === '/api/ops' && req.method === 'GET') {
       return a;
     }, { revenue: 0, cash: 0, qr: 0, debt: 0, count: 0 });
     return json(res, 200, { from, to, totals });
+  }
+
+  // ---------- остаток экспедитора на борту: свой — сам агент, чужой — менеджер/директор (?userId=) ----------
+  if (p === '/api/agent/mystock' && req.method === 'GET') {
+    let targetId = user.id;
+    const qUserId = u.searchParams.get('userId');
+    if (qUserId && (isAdmin || isManager)) targetId = qUserId;
+    else if (!isAgent(role)) return json(res, 403, { error: 'Нет прав' });
+    const st = db.agentStock[targetId] || {};
+    const rows = Object.entries(st).filter(([, v]) => v.qty > 0.0001).map(([pid, v]) => {
+      const p = product(pid);
+      return { productId: pid, name: p ? p.name : '?', unit: p ? p.unit : '', type: p ? p.type : '', qty: r2(v.qty), salePrice: p ? (p.salePrice || 0) : 0 };
+    });
+    return json(res, 200, rows);
+  }
+  // накопленный брак (обмены по сроку годности), ещё не списанный — для карточки "Возвраты" у агента
+  if (p === '/api/agent/brak' && req.method === 'GET') {
+    if (!isAgent(role)) return json(res, 403, { error: 'Нет прав' });
+    const items = db.agentBrak[user.id] || [];
+    const byProd = {};
+    items.forEach(it => { byProd[it.productId] = r2((byProd[it.productId] || 0) + it.qty); });
+    const rows = Object.entries(byProd).map(([pid, qty]) => { const p = product(pid); return { productId: pid, name: p ? p.name : '?', unit: p ? p.unit : '', qty }; });
+    return json(res, 200, { count: items.length, rows });
   }
 
   // ---------- нал на руках у агента + сдача выручки (инкассация) ----------
