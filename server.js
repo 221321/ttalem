@@ -536,16 +536,29 @@ const OPS = { receipt: opReceipt, processing: opProcessing, production: opProduc
 // ---------- отчёты ----------
 // ---------- отчёт по реализации: выручка, себестоимость, прибыль, долги ----------
 function reportSales(from, to) {
-  let ops = db.operations.filter(o => o.type === 'sale' && !o.cancelled);
+  // ИСПРАВЛЕНО: раньше учитывались только 'sale', и накладные (несколько позиций одним
+  // документом — их оформляют торговые/экспедиторы через "Накладная") целиком выпадали
+  // из отчёта директору — ни выручка, ни долг по ним нигде не считались.
+  let ops = db.operations.filter(o => (o.type === 'sale' || o.type === 'waybill') && !o.cancelled);
   if (from) ops = ops.filter(o => o.ts.slice(0, 10) >= from);
   if (to) ops = ops.filter(o => o.ts.slice(0, 10) <= to);
 
   const rows = ops.slice().sort((a, b) => a.ts < b.ts ? 1 : -1).map(o => {
-    const p = product(o.productId);
     const seller = db.users.find(u => u.id === o.userId);
+    let name, unit, qty;
+    if (o.type === 'waybill') {
+      name = 'Накладная (' + (o.items ? o.items.length : 0) + ' поз.)';
+      unit = '';
+      qty = o.items ? r2(o.items.reduce((a, it) => a + (+it.qty || 0), 0)) : 0;
+    } else {
+      const p = product(o.productId);
+      name = p ? p.name : '?';
+      unit = p ? p.unit : '';
+      qty = o.qty;
+    }
     return {
-      id: o.id, ts: o.ts, name: p ? p.name : '?', unit: p ? p.unit : '',
-      qty: o.qty, price: o.price, sum: o.sum, costSum: o.costSum, profit: o.profit,
+      id: o.id, ts: o.ts, name, unit,
+      qty, price: o.price, sum: o.sum, costSum: o.costSum, profit: o.profit,
       client: o.client, clientId: o.clientId || null, paid: o.paid, paidAmount: o.paidAmount, debt: r2((o.sum || 0) - (o.paidAmount || 0)),
       paymentCash: o.paymentCash || 0, paymentQr: o.paymentQr || 0,
       sellerId: o.userId, sellerName: seller ? seller.name : '?', source: o.source || 'сайт'
@@ -796,7 +809,8 @@ function buildReportByAgent(from, to) {
 function buildReportCash(from, to) {
   const inRange = ts => (!from || ts.slice(0, 10) >= from) && (!to || ts.slice(0, 10) <= to);
   const byUser = {};
-  db.operations.filter(o => o.type === 'sale' && !o.cancelled && inRange(o.ts)).forEach(o => {
+  // ИСПРАВЛЕНО: наличные/QR, собранные по накладным (waybill), раньше не попадали в кассовый отчёт
+  db.operations.filter(o => (o.type === 'sale' || o.type === 'waybill') && !o.cancelled && inRange(o.ts)).forEach(o => {
     if (!byUser[o.userId]) byUser[o.userId] = { userId: o.userId, cash: 0, qr: 0, count: 0 };
     byUser[o.userId].cash = money2(byUser[o.userId].cash + (o.paymentCash || 0));
     byUser[o.userId].qr = money2(byUser[o.userId].qr + (o.paymentQr || 0));
@@ -1201,11 +1215,13 @@ function route(req, res, u, data) {
 
   // ---------- реалтайм-подтверждение оплаты из 1С (как в Жайыке): без логина, просто секрет ----------
   // 1С вызывает это СРАЗУ после того, как реально зарегистрировала оплату (провела кассовый/банковский документ) —
-  // а не по кнопке "синхронизировать" раз в день. ref — это ИдSkyMeal вида "sale|o1cbei".
+  // а не по кнопке "синхронизировать" раз в день. ref — это ИдSkyMeal вида "sale|o1cbei" или "waybill|o1cbei".
   if (p === '/api/1c/payment-confirm' && req.method === 'POST') {
     if (data.secret !== SYNC_SECRET) return json(res, 403, { error: 'Нет доступа' });
-    const id = String(data.ref || '').replace(/^sale\|/, '');
-    const rec = db.operations.find(o => o.id === id && o.type === 'sale');
+    // ИСПРАВЛЕНО: раньше обрезался только префикс "sale|" — для накладной (ref "waybill|...")
+    // id не совпадал ни с чем, и 1С никогда не могла подтвердить оплату по накладной.
+    const id = String(data.ref || '').replace(/^(sale|waybill)\|/, '');
+    const rec = db.operations.find(o => o.id === id && (o.type === 'sale' || o.type === 'waybill'));
     if (!rec) return json(res, 404, { error: 'Продажа не найдена: ' + data.ref });
     rec.paidAmount = r2(Math.min(rec.sum, +data.paidAmount || 0));
     rec.paid = !!data.paid || rec.paidAmount >= rec.sum - 0.001;
@@ -1505,7 +1521,9 @@ function route(req, res, u, data) {
   const mSalePay = p.match(/^\/api\/sales\/([^/]+)\/pay$/);
   if (mSalePay && req.method === 'POST') {
     if (isCook(role)) return json(res, 403, { error: 'Нет прав' });
-    const rec = db.operations.find(o => o.id === mSalePay[1] && o.type === 'sale');
+    // ИСПРАВЛЕНО: раньше искало только type==='sale' — погасить долг по накладной (waybill)
+    // было невозможно, кнопка "Погасить" у агента всегда отвечала 404 "Продажа не найдена".
+    const rec = db.operations.find(o => o.id === mSalePay[1] && (o.type === 'sale' || o.type === 'waybill'));
     if (!rec) return json(res, 404, { error: 'Продажа не найдена' });
     if (rec.cancelled) return json(res, 400, { error: 'Продажа отменена' });
     if (isAgent(role) && rec.userId !== user.id) return json(res, 403, { error: 'Можно отмечать оплату только по своим продажам' });
@@ -1639,7 +1657,8 @@ if (p === '/api/ops' && req.method === 'GET') {
   if (p === '/api/report/my-sales') {
     const from = u.searchParams.get('from') || today();
     const to = u.searchParams.get('to') || today();
-    const mine = db.operations.filter(o => o.type === 'sale' && !o.cancelled && o.userId === user.id && o.ts.slice(0, 10) >= from && o.ts.slice(0, 10) <= to);
+    // ИСПРАВЛЕНО: накладные не считались в личной аналитике агента (выручка/нал/QR/долг занижались)
+    const mine = db.operations.filter(o => (o.type === 'sale' || o.type === 'waybill') && !o.cancelled && o.userId === user.id && o.ts.slice(0, 10) >= from && o.ts.slice(0, 10) <= to);
     const totals = mine.reduce((a, o) => {
       a.revenue = r2(a.revenue + (o.sum || 0));
       a.cash = r2(a.cash + (o.paymentCash || 0));
@@ -1653,8 +1672,10 @@ if (p === '/api/ops' && req.method === 'GET') {
 
   // ---------- нал на руках у агента + сдача выручки (инкассация) ----------
   function cashOnHand(userId) {
+    // ИСПРАВЛЕНО: наличные по накладным (waybill) не учитывались — на руках у агента
+    // показывалось меньше, чем он реально собрал, если часть продаж шла накладными.
     const collected = db.operations
-      .filter(o => o.type === 'sale' && !o.cancelled && o.userId === userId)
+      .filter(o => (o.type === 'sale' || o.type === 'waybill') && !o.cancelled && o.userId === userId)
       .reduce((a, o) => a + (o.paymentCash || 0), 0);
     const handed = db.cashHandovers
       .filter(h => h.userId === userId)
@@ -1668,7 +1689,7 @@ if (p === '/api/ops' && req.method === 'GET') {
     }
     // директор/менеджер — сводка по всем, у кого есть продажи с наличными
     if (!isAdmin && role !== 'manager') return json(res, 403, { error: 'Нет прав' });
-    const sellerIds = new Set(db.operations.filter(o => o.type === 'sale' && !o.cancelled && (o.paymentCash || 0) > 0).map(o => o.userId));
+    const sellerIds = new Set(db.operations.filter(o => (o.type === 'sale' || o.type === 'waybill') && !o.cancelled && (o.paymentCash || 0) > 0).map(o => o.userId));
     const rows = Array.from(sellerIds).map(uid => {
       const u2 = db.users.find(x => x.id === uid);
       return { userId: uid, name: u2 ? u2.name : '?', onHand: cashOnHand(uid) };
@@ -1919,11 +1940,13 @@ if (p === '/api/ops' && req.method === 'GET') {
     return json(res, 200, { applied: rows.length, total });
   }
 
-  // ---------- сверка оплат: 1С присылает {items:[{ref, paid, paidAmount}]}, ref = ИдSkyMeal вида "sale|o1cbei" ----------
+  // ---------- сверка оплат: 1С присылает {items:[{ref, paid, paidAmount}]}, ref = ИдSkyMeal вида "sale|o1cbei" или "waybill|o1cbei" ----------
   // Деньги подтверждает касса/банк в 1С — это источник правды по факту оплаты.
   function findSaleByRef(ref) {
-    const id = String(ref || '').replace(/^sale\|/, '');
-    return db.operations.find(o => o.id === id && o.type === 'sale');
+    // ИСПРАВЛЕНО: раньше обрезался только префикс "sale|" и искалось только type==='sale' —
+    // сверка оплат по накладным всегда попадала в notFound, даже если накладная реально существует.
+    const id = String(ref || '').replace(/^(sale|waybill)\|/, '');
+    return db.operations.find(o => o.id === id && (o.type === 'sale' || o.type === 'waybill'));
   }
   if (p === '/api/1c/payment-diff' && req.method === 'POST') {
     if (!isAdmin) return json(res, 403, { error: 'Только директор' });
@@ -1941,9 +1964,10 @@ if (p === '/api/ops' && req.method === 'GET') {
       if (oursPaid === theirsPaid && Math.abs(oursAmount - theirsAmount) < 0.01) {
         matchedSame++;
       } else {
-        const p2 = product(rec.productId);
+        // ИСПРАВЛЕНО: у накладной нет rec.productId (несколько позиций) — раньше название всегда было "?"
+        const name = rec.type === 'waybill' ? 'Накладная (' + (rec.items ? rec.items.length : 0) + ' поз.)' : (product(rec.productId) ? product(rec.productId).name : '?');
         mismatches.push({
-          ref: item.ref, saleId: rec.id, name: p2 ? p2.name : '?', client: rec.client, sum: rec.sum,
+          ref: item.ref, saleId: rec.id, name, client: rec.client, sum: rec.sum,
           skyMealPaid: oursPaid, skyMealAmount: oursAmount, oneCPaid: theirsPaid, oneCAmount: theirsAmount
         });
       }
