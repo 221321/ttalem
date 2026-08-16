@@ -475,7 +475,7 @@ function opSale(o, user) {
   const s = fromAgent ? agentStockOf(user.id, o.productId) : stockOf(o.productId, skId);
   if (s.qty + 0.001 < o.qty) {
     throw new Error(fromAgent
-      ? 'Недостаточно «' + p.name + '» на борту: есть ' + r2(s.qty) + ', требуется ' + o.qty + '. Получите загрузочный лист у менеджера.'
+      ? 'Недостаточно «' + p.name + '» на борту: есть ' + r2(s.qty) + ', требуется ' + o.qty + '. Сначала отметьте в «Взял с собой».'
       : 'Недостаточно «' + p.name + '» на складе: есть ' + r2(s.qty) + ', требуется ' + o.qty + '. Сначала сделайте выпуск.');
   }
   const uc = fromAgent ? agentUnitCost(user.id, o.productId) : unitCost(o.productId);
@@ -1600,7 +1600,7 @@ function route(req, res, u, data) {
     if (!isAdmin) return json(res, 403, { error: 'Только директор' });
     return json(res, 200, db.users.map(x => ({ id: x.id, name: x.name, role: x.role })));
   }
-  // список экспедиторов — для менеджера/директора, чтобы выбрать кому оформить загрузочный лист
+  // список экспедиторов — для менеджера/директора, чтобы выбрать чью ведомость смотреть
   if (p === '/api/agents' && req.method === 'GET') {
     if (!(isAdmin || isManager)) return json(res, 403, { error: 'Нет прав' });
     return json(res, 200, db.users.filter(u => isAgent(u.role)).map(u => ({ id: u.id, name: u.name })));
