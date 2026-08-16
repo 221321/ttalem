@@ -475,7 +475,7 @@ function opSale(o, user) {
   const s = fromAgent ? agentStockOf(user.id, o.productId) : stockOf(o.productId, skId);
   if (s.qty + 0.001 < o.qty) {
     throw new Error(fromAgent
-      ? 'Недостаточно «' + p.name + '» на борту: есть ' + r2(s.qty) + ', требуется ' + o.qty + '. Сначала отметьте в «Взял с собой».'
+      ? 'Недостаточно «' + p.name + '» в остатке: есть ' + r2(s.qty) + ', требуется ' + o.qty + '. Сначала оформите приём товара.'
       : 'Недостаточно «' + p.name + '» на складе: есть ' + r2(s.qty) + ', требуется ' + o.qty + '. Сначала сделайте выпуск.');
   }
   const uc = fromAgent ? agentUnitCost(user.id, o.productId) : unitCost(o.productId);
@@ -531,7 +531,7 @@ function opWaybill(o, user) {
     const s = fromAgent ? agentStockOf(user.id, it.productId) : stockOf(it.productId, skId);
     if (s.qty + 0.001 < +it.qty) {
       throw new Error(fromAgent
-        ? 'Недостаточно «' + p.name + '» на борту: есть ' + r2(s.qty) + ', требуется ' + it.qty
+        ? 'Недостаточно «' + p.name + '» в остатке: есть ' + r2(s.qty) + ', требуется ' + it.qty
         : 'Недостаточно «' + p.name + '» на складе: есть ' + r2(s.qty) + ', требуется ' + it.qty);
     }
     const uc = fromAgent ? agentUnitCost(user.id, it.productId) : unitCost(it.productId);
@@ -612,7 +612,7 @@ function opExchange(o, user) {
   if (!(qtyOut > 0) && !(qtyBack > 0)) throw new Error('Укажите количество свежего или забранного');
   if (qtyOut > 0) {
     const s = agentStockOf(user.id, o.productId);
-    if (s.qty + 0.001 < qtyOut) throw new Error('Недостаточно «' + p.name + '» на борту: есть ' + r2(s.qty) + ', требуется ' + qtyOut);
+    if (s.qty + 0.001 < qtyOut) throw new Error('Недостаточно «' + p.name + '» в остатке: есть ' + r2(s.qty) + ', требуется ' + qtyOut);
     const val = r2(agentUnitCost(user.id, o.productId) * qtyOut);
     s.qty = r2(s.qty - qtyOut);
     s.value = r2(Math.max(0, s.value - val));
@@ -1714,7 +1714,7 @@ function route(req, res, u, data) {
     // Экспедитор сам утром отмечает, что взял со склада — согласование с менеджером убрано (лишний
     // шаг в утренней суете), сверяет менеджер вечером в «Ведомости по экспедитору».
     if (isAgent(role) && !['sale', 'waybill', 'exchange', 'agent_return', 'agent_brak_writeoff', 'agent_issue'].includes(data.type)) {
-      return json(res, 403, { error: 'Экспедитор может оформлять только "взял с собой", продажу, накладную, обмен и сдачу остатка' });
+      return json(res, 403, { error: 'Экспедитор может оформлять только приём товара, продажу, накладную, обмен и сдачу остатка' });
     }
     if (data.type === 'receipt' && isCook(role)) return json(res, 403, { error: 'Нет прав' });
     if (data.type === 'inventory' && !isAdmin) return json(res, 403, { error: 'Инвентаризацию проводит директор' });
