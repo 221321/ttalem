@@ -510,7 +510,9 @@ function opSale(o, user) {
   return {
     type: 'sale', productId: o.productId, skladId: skId, qty: o.qty, price, sum, costSum,
     profit: r2(sum - costSum), client: clientName, clientId,
-    paymentCash, paymentQr, paymentDebt, paid, paidAmount
+    paymentCash, paymentQr, paymentDebt, paid, paidAmount,
+    fromAgentBoard: fromAgent // при отмене товар должен вернуться на борт экспедитора, а не на склад —
+    // физически он всё это время был у него, а не на базе (см. /api/sales/:id/cancel)
   };
 }
 // накладная — несколько позиций одним документом (как в Жайыке: клиент + адрес + список строк).
@@ -566,7 +568,8 @@ function opWaybill(o, user) {
   return {
     type: 'waybill', items: lines, sum, costSum, profit: r2(sum - costSum),
     client: clientName, clientId, address,
-    paymentCash, paymentQr, paymentDebt, paid, paidAmount
+    paymentCash, paymentQr, paymentDebt, paid, paidAmount,
+    fromAgentBoard: fromAgent // см. комментарий в opSale — то же самое для накладной
   };
 }
 
@@ -1745,14 +1748,17 @@ function route(req, res, u, data) {
     const rec = db.operations.find(o => o.id === mSaleCancel[1] && (o.type === 'sale' || o.type === 'waybill'));
     if (!rec) return json(res, 404, { error: 'Продажа не найдена' });
     if (rec.cancelled) return json(res, 400, { error: 'Уже отменена' });
-    // вернуть товар на склад
+    // Возврат товара при отмене: если продажа была сделана экспедитором с борта — товар физически
+    // всё это время был у него, а не на базе, значит возвращать нужно на борт, а не на центральный
+    // склад. Раньше товар ВСЕГДА возвращался на MAIN_SK, даже для продаж экспедитора — это создавало
+    // фантомный излишек на складе (которого физически там нет) и ложную недостачу в его ведомости.
     if (rec.type === 'sale') {
-      const s = stockOf(rec.productId, rec.skladId);
+      const s = rec.fromAgentBoard ? agentStockOf(rec.userId, rec.productId) : stockOf(rec.productId, rec.skladId);
       s.qty = r2(s.qty + rec.qty);
       s.value = r2(s.value + rec.costSum);
     } else if (rec.type === 'waybill' && Array.isArray(rec.items)) {
       rec.items.forEach(it => {
-        const s = stockOf(it.productId, it.skladId);
+        const s = rec.fromAgentBoard ? agentStockOf(rec.userId, it.productId) : stockOf(it.productId, it.skladId);
         s.qty = r2(s.qty + it.qty);
         s.value = r2(s.value + it.costSum);
       });
